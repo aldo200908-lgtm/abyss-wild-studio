@@ -29,6 +29,13 @@ jobs:
           node-version: '22'
       - name: Verify JavaScript motion geometry
         run: node --test render/tests/motion.test.mjs
+      - name: Compile Remotion scene with test data
+        run: |
+          cd render
+          npm install --no-audit --no-fund --prefer-offline
+          trap 'rm -f public/data.json' EXIT
+          printf '%s\n' '{"topic":"Prueba","title":"Prueba","duration":30,"fps":30,"beats":[],"captions":[],"caption_layout":{"y":0.52,"max_width":0.9,"max_text_px":900}}' > public/data.json
+          node --input-type=module -e "import {bundle} from '@remotion/bundler'; import path from 'node:path'; await bundle({entryPoint: path.resolve('src/index.jsx')}); console.log('RENDER_BUNDLE_OK');"
       - name: Verify Python syntax
         run: python -m compileall -q pipeline.py motion_math.py topic_research.py topic_guard.py response_shapes.py offline_voice.py native_spanish_voice.py spanish_voice_text.py voice_bank.py tests
       - name: Unit tests
