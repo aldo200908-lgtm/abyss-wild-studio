@@ -23,7 +23,9 @@ import numpy as np
 import requests
 from PIL import Image
 from response_shapes import normalize_script_payload, normalize_audit_payload
-from offline_voice import narration, VOICE_PAGE
+from native_spanish_voice import (AzureSpanishSpeech, config_from, render_native_voice,
+                                  whisper_quality, spectral_high_frequency_ratio)
+from spanish_voice_text import load_dictionary
 from topic_guard import topic_problems
 from script_repair import apply_scene_repairs
 from topic_research import (topic_plan, gather_candidates, candidate_selection,
@@ -234,8 +236,10 @@ Genera SOLO un OBJETO JSON: {{"title":"...","scenes":[{{"line":"...",
 "visual_type":"photo|object|fossil|landscape|reconstruction|diagram|infographic",
 "label":"DATO VERIFICADO|FÓSIL REAL|ILUSTRACIÓN|ARCHIVO DE APOYO",
 "compare_m":null}}]}}.
-Obligatorio: 13 a 17 escenas; 85 a 105 palabras en conjunto;
-cada escena 4 a 9 palabras. Una idea narrativa, 30 a 45 segundos de voz,
+Obligatorio: 10 a 12 escenas; 90 a 110 palabras en conjunto;
+cada escena 8 a 12 palabras, con puntuación y gramática correcta, sin
+siglas inexplicadas y sin palabras extranjeras innecesarias. Estas escenas se
+sintetizan en español una por una a ritmo natural. Una idea narrativa, 30 a 45 segundos de voz,
 gancho de máximo dos segundos, cambio visual cada 2 a 3 segundos.
 Primera escena: afirmación documentada impactante, sin saludo.
 Última: pregunta breve sobre el tema sin nuevos hechos y fact_ids=[].
@@ -388,7 +392,19 @@ def make_timing(script):
     measured scene; Piper does not provide Edge WordBoundary events.
     """
     scenes = script['scenes']
-    marks, d, engine = narration(scenes, WORK / 'voice.mp3')
+    config = config_from(ROOT / 'config.json')
+    dictionary = load_dictionary(ROOT / 'pronunciacion.json')
+    speaker = AzureSpanishSpeech(os.getenv('AZURE_SPEECH_KEY', ''),
+                                os.getenv('AZURE_SPEECH_REGION', ''))
+    speaker.ensure_voice(config['voice'])
+    marks, d, info = render_native_voice(
+        scenes, WORK / 'voice.mp3', config, dictionary, speaker)
+    save_json(WORK / 'voice_meta.json', info)
+    # Produce the diagnostic report before rejecting a faulty pronunciation.
+    whisper = whisper_quality(WORK / 'voice.mp3', info['normalized_text'],
+                              config, DIST / 'pronunciacion_reporte.txt')
+    save_json(WORK / 'voice_asr.json', whisper)
+    engine = 'Azure Speech ' + config['voice']
     expected = [normalized(w) for scene in scenes for w in tokens(scene['line'])]
     actual = [normalized(mark['text']) for mark in marks]
     if expected != actual:
@@ -419,10 +435,11 @@ def make_timing(script):
     script['captions'] = captions
     script['duration'] = round(d, 3)
     script['voice_engine'] = engine
-    script['word_timing_method'] = 'interpolated_per_measured_scene'
+    script['word_timing_method'] = 'approximate_in_measured_phrase'
     save_json(WORK / 'script.json', script)
-    log(f'Voz local ({engine}) {d:.1f}s, {len(marks)} palabras '
-        'con tiempos aproximados dentro de escenas medidas')
+    log(f'Voz española ({engine}) {d:.1f}s, {len(marks)} subtítulos '
+        'con tiempos aproximados; Whisper: '
+        f'{whisper["transcription_match"]:.1%} de coincidencia')
 
 
 def valid_license(ext):
@@ -703,6 +720,27 @@ def validate():
     # Remotion uses width=80%, overflowWrap, and reserved 280px safe margins.
     lufs = measured_lufs(path)
     assert -16 <= lufs <= -12, f'Volumen {lufs:.1f} LUFS fuera de tolerancia'
+    # True-peak approximation by resampling to 176.4kHz (~4x).
+    raw = subprocess.run(
+        ['ffmpeg', '-hide_banner', '-loglevel', 'error', '-i', str(path),
+         '-vn', '-ac', '1', '-ar', '176400', '-f', 'f32le', '-'],
+        capture_output=True, check=True).stdout
+    peaks = np.frombuffer(raw, dtype='<f4')
+    if peaks.size < 1000:
+        raise RuntimeError('Sin muestras de audio para medir true peak')
+    true_peak_dbtp = 20 * math.log10(max(float(np.max(np.abs(peaks))), 1e-9))
+    assert true_peak_dbtp <= -1.5, (
+        f'True peak {true_peak_dbtp:.2f} dBTP excede -1.5 dBTP')
+    voice_meta = load_json(WORK / 'voice_meta.json')
+    asr = load_json(WORK / 'voice_asr.json')
+    pauses = voice_meta['pauses']
+    hi_freq = spectral_high_frequency_ratio(WORK / 'voice.mp3')
+    quality = {'voice': voice_meta['voice'], 'locale': voice_meta['locale'],
+               'lufs_integrated': lufs, 'true_peak_dbtp_4x': round(true_peak_dbtp, 3),
+               'pauses_count': len(pauses), 'pauses_seconds': pauses,
+               'energy_above_4khz_ratio': hi_freq,
+               'transcription_match': asr['transcription_match']}
+    save_json(DIST / 'audio_calidad.json', quality)
     (DIST / 'guion.txt').write_text('\n'.join(s['line'] for s in script['scenes']) + '\n', encoding='utf-8')
     used_ids = sorted({i for s in script['scenes'] for i in s.get('fact_ids', [])})
     facts = {f['id']: f for f in script['facts']}
@@ -717,9 +755,9 @@ def validate():
                              f"Autor: {credit['author']}", f"Licencia: {credit['license']}",
                              f"Licencia URL: {credit['license_url']}", f"Origen: {credit['page']}", ''])
     credit_lines += ['Música y efectos: generados algorítmicamente en este proyecto (sin muestras de terceros).',
-                     'Voz: ' + script.get('voice_engine', 'Piper') + ' (síntesis local en GitHub Actions).',
-                      'Piper modelo español es_MX-ald-medium: ' + VOICE_PAGE + '.',
-                      'Subtítulos: estimación por palabra dentro de escenas de audio medidas; no WordBoundary real.',
+                     'Voz: ' + script.get('voice_engine', 'Azure Speech, voz española') + '.',
+                      'Proveedor: Microsoft Azure AI Speech (voz neural en español).',
+                      'Subtítulos: marcas aproximadas por palabra dentro de frases medidas.',
                      'Gráficos tipográficos originales; font Anton (SIL Open Font License).',
                      'Wikipedia: textos sujetos a CC BY-SA y atribución mediante fuentes.txt.',
                      'Material de apoyo o ilustración no constituye fotografía del animal prehistórico.',
@@ -748,14 +786,16 @@ def validate():
     estimated_pen = estimated_usd * float(os.environ.get('USD_PEN', '3.50'))
     report = {'topic': script['topic'], 'duration_seconds': round(d, 2), 'lufs': lufs,
               'gemini_model': MODEL, 'gemini_requests': USAGE['requests'],
-               'voice_engine': script.get('voice_engine', 'Piper'),
+               'voice_engine': script.get('voice_engine', 'Azure Speech'),
+               'voice_quality': quality,
                'word_timing_method': script.get('word_timing_method', 'unknown'),
               'input_tokens': USAGE['input_tokens'], 'output_tokens': USAGE['output_tokens'],
               'render_seconds': secs, 'action_minutes_approx': round(elapsed, 2),
               'runner_cost_pen_conservative': round(estimated_pen, 3),
               'six_videos_daily_monthly_minutes_projection': round(6 * 30 * max(1, elapsed)),
               'warning_private_2000_min': 6 * 30 * max(1, elapsed) > 2000,
-              'files': ['video.mp4', 'guion.txt', 'fuentes.txt', 'creditos.txt', 'descripcion.txt']}
+              'files': ['video.mp4', 'guion.txt', 'fuentes.txt', 'creditos.txt',
+                        'descripcion.txt', 'pronunciacion_reporte.txt', 'audio_calidad.json']}
     save_json(DIST / 'reporte.json', report)
     log(f'VALIDADO: 1080x1920, {d:.1f}s, {lufs:.1f} LUFS, render {secs}s')
     log(f'Proyección 6/día: {report["six_videos_daily_monthly_minutes_projection"]} min/mes; '
