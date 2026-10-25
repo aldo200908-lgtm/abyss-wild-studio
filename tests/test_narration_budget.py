@@ -22,7 +22,7 @@ def example_scenes():
          'fact_ids': ['F1']}
     ]
     scenes += [
-        {'line': 'Aquella serpiente tenía un tamaño extraordinario para su época.',
+        {'line': 'Aquella serpiente tenía dimensiones enormes en Colombia.',
          'fact_ids': ['F1']}
         for _ in range(8)
     ]
