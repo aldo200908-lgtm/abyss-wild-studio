@@ -48,8 +48,14 @@ jobs:
         with:
           path: ~/.npm
           key: npm-${{ runner.os }}-${{ hashFiles('render/package.json') }}
+      - name: 3c · Restaurar voz española Piper
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/abyss-piper
+          key: piper-es-MX-ald-medium-v1
       - name: 4 · Instalar dependencias
         run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq espeak-ng
           python -m pip install -r requirements.txt
           cd render
           npm install --no-audit --no-fund --prefer-offline
