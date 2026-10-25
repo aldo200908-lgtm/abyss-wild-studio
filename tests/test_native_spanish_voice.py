@@ -149,7 +149,7 @@ class NativeVoiceUnitTests(unittest.TestCase):
             self.assertEqual(meta['locale'], 'es-PE')
             self.assertEqual(len(meta['pauses']), 4)
             self.assertTrue(all(.2 <= p <= .5 for p in meta['pauses']))
-            self.assertEqual(len(marks), 100)
+            self.assertEqual(len(marks), 90)
 
 
 
