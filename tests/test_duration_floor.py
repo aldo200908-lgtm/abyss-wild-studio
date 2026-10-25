@@ -17,7 +17,26 @@ from narration_budget import video_duration_for_narration
 from native_spanish_voice import (
     NarrationDurationError, render_native_voice,
 )
-from tests.test_narration_budget import example_scenes, VOICE_CONFIG
+VOICE_CONFIG = {
+    'voice': 'es-MX-JorgeNeural',
+    'phrase_min_words': 8, 'phrase_max_words': 18,
+    'pause_min_seconds': .2, 'pause_max_seconds': .5,
+}
+
+
+def example_scenes():
+    scenes = [
+        {'line': 'Titanoboa habitó las selvas tropicales de la antigua Colombia.',
+         'fact_ids': ['F1']}
+    ]
+    scenes += [
+        {'line': 'Aquella serpiente tenía dimensiones enormes en Colombia.',
+         'fact_ids': ['F1']} for _ in range(8)
+    ]
+    scenes.append({'line': '¿Te imaginas encontrarte con una Titanoboa en persona?',
+                   'fact_ids': []})
+    return scenes
+
 
 
 class VideoDurationPlanTests(unittest.TestCase):
