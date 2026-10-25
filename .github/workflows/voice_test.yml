@@ -1,0 +1,58 @@
+name: ABYSS WILD — Banco de voces en español
+
+on:
+  workflow_dispatch:
+    inputs:
+      frase:
+        description: Frase de prueba (vacío usa config.json)
+        required: false
+        type: string
+      incluir_piper:
+        description: Incluir Piper español como muestra opcional CPU
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  banco:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      AZURE_SPEECH_KEY: ${{ secrets.AZURE_SPEECH_KEY }}
+      AZURE_SPEECH_REGION: ${{ secrets.AZURE_SPEECH_REGION }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Preparar audio
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends ffmpeg
+          python -m pip install -r requirements.txt
+      - name: Validar voz y credenciales
+        run: |
+          python -c "from native_spanish_voice import config_from; config_from('config.json')"
+          test -n "$AZURE_SPEECH_KEY" || { echo 'Falta Secret AZURE_SPEECH_KEY'; exit 1; }
+          test -n "$AZURE_SPEECH_REGION" || { echo 'Falta Secret AZURE_SPEECH_REGION'; exit 1; }
+      - name: Crear cinco voces y ZIP
+        env:
+          VOICE_TEST_PHRASE: ${{ inputs.frase }}
+          INCLUDE_PIPER: ${{ inputs.incluir_piper }}
+        run: |
+          if [ "$INCLUDE_PIPER" = "true" ]; then
+            python voice_bank.py --phrase "${VOICE_TEST_PHRASE:-$(python -c 'import json;print(json.load(open("config.json"))["bank_test_phrase"])')}" --include-piper
+          else
+            python voice_bank.py --phrase "${VOICE_TEST_PHRASE:-$(python -c 'import json;print(json.load(open("config.json"))["bank_test_phrase"])')}"
+          fi
+      - name: Banco de voces para descargar
+        uses: actions/upload-artifact@v4
+        with:
+          name: banco_voces_espanolas
+          path: banco_voces_espanolas.zip
+          if-no-files-found: error
+          retention-days: 7
