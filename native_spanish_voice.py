@@ -267,7 +267,7 @@ def whisper_quality(audio, expected, config, report_path):
     model = WhisperModel(config['whisper_model'], device='cpu',
                          compute_type='int8', cpu_threads=2)
     segments, info = model.transcribe(str(audio), language='es', beam_size=5,
-                                     condition_on_previous_text=False)
+                                     condition_on_previous_text=False, word_timestamps=True)
     heard = ' '.join(seg.text.strip() for seg in segments).strip()
     score, suspects = transcript_score(expected, heard)
     lines = [f'Voz: {config["voice"]}', 'Idioma de transcripción: es',
