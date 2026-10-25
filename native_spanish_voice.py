@@ -14,7 +14,7 @@ from xml.sax.saxutils import escape as xml_escape
 
 import numpy as np
 from spanish_voice_text import (normalizar, fonetizar, load_dictionary,
-                                palabras, grupos_de_frases)
+                                palabras, grupos_de_frases, NUMBER, number_es)
 
 class NarrationDurationError(RuntimeError):
     """Measured natural voice is outside the allowed video length."""
@@ -222,7 +222,12 @@ def transcript_score(expected, observed):
     """WER-like token-level Levenshtein similarity, not just char overlap."""
     import unicodedata
     def toks(text):
-        plain = unicodedata.normalize('NFKD', text.lower())
+        # Whisper writes some correctly spoken numbers in digits ("186")
+        # instead of words ("ciento ochenta y seis"). Reuse the exact
+        # Spanish number converter used for Azure narration.
+        expanded = re.sub(rf'(?<![\w.])(?:{NUMBER})(?!\w)',
+                          lambda m: number_es(m.group(0)), str(text))
+        plain = unicodedata.normalize('NFKD', expanded.lower())
         plain = ''.join(c for c in plain if not unicodedata.combining(c))
         return re.findall(r'[a-zñ0-9]+', plain)
     a, b = toks(expected), toks(observed)
@@ -258,6 +263,8 @@ def whisper_quality(audio, expected, config, report_path):
     lines = [f'Voz: {config["voice"]}', 'Idioma de transcripción: es',
              f'Coincidencia léxica: {score:.2%}',
              f'Mínimo exigido: {config["min_transcription_match"]:.0%}',
+             'Equivalencia numérica: cifras y números pronunciados '
+             'en palabras se comparan de forma idéntica.',
              f'Transcripción detectada: {heard}',
              'Diferencias sospechosas (revisar por oído, no asumir error fonético):']
     for item in suspects[:80]:
