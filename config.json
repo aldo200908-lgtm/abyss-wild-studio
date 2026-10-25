@@ -1,0 +1,15 @@
+{
+  "voice": "es-PE-AlexNeural",
+  "tts_provider": "azure",
+  "rate_percent": -2,
+  "phrase_min_words": 8,
+  "phrase_max_words": 18,
+  "pause_min_seconds": 0.2,
+  "pause_max_seconds": 0.5,
+  "whisper_model": "small",
+  "whisper_language": "es",
+  "min_transcription_match": 0.92,
+  "verify_voice_locale": true,
+  "strict_no_fallback": true,
+  "bank_test_phrase": "Titanoboa cerrejonensis fue una serpiente gigantesca. Sus fósiles aparecieron en el Cerrejón, Colombia. ¿Cuánto pudo medir realmente?"
+}
