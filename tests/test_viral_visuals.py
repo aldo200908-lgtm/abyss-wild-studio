@@ -52,7 +52,7 @@ class ViralVisualTests(unittest.TestCase):
                             '-i','color=c=black:s=1080x1920:r=30:d=3',
                             '-c:v','libx264','-preset','ultrafast',
                             str(path)],check=True)
-            with self.assertRaisesRegex(RuntimeError, 'Fotograma vacío'):
+            with self.assertRaisesRegex(RuntimeError, 'Plano B-roll vacío|Fotograma vacío'):
                 verify_video(path,3)
 
     @unittest.skipUnless(shutil.which('ffmpeg') and shutil.which('ffprobe'),
