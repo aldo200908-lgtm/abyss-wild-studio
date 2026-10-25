@@ -47,7 +47,7 @@ test('focal point is normalized subject ROI', () => {
 });
 
 test('caption always fits width and anchors to midframe', () => {
-  assert.equal(CAPTION_TOP, .52);
+  assert.equal(CAPTION_TOP, .50);
   assert.equal(CAPTION_WIDTH, .9);
   assert.equal(W * CAPTION_WIDTH, 972);
   assert.ok(MAX_TEXT_PX <= 900);
