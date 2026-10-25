@@ -30,7 +30,7 @@ from native_spanish_voice import (AzureSpanishSpeech, config_from, render_native
                                   NarrationDurationError)
 from spanish_voice_text import load_dictionary
 from narration_budget import (predict_duration, remove_secondary_scene,
-                              MAX_PREVIEW_SECONDS)
+                              MAX_PREVIEW_SECONDS, video_duration_for_narration)
 from topic_guard import topic_problems
 from script_repair import apply_scene_repairs
 from audio_design import make_soundtracks
@@ -460,7 +460,15 @@ def make_timing(script):
             log(f'Voz natural {err.seconds:.1f}s: omitida escena secundaria '
                 f'{index+1} ya verificada; nuevo intento sin acelerar')
     script['removed_voice_budget_scenes'] = removed
+    video_seconds = video_duration_for_narration(d)
+    tail_seconds = round(video_seconds - d, 3)
+    info['voice_duration_seconds'] = round(d, 3)
+    info['ambient_outro_seconds'] = tail_seconds
     save_json(WORK / 'voice_meta.json', info)
+    if tail_seconds > 0:
+        log(f'Locución natural {d:.2f}s: se conservan íntegramente '
+            f'las palabras y se añaden {tail_seconds:.2f}s de cierre visual '
+            'con música continua; SIN silencios entre frases.')
     # Use actual ASR word timestamps rather than naive duration interpolation.
     whisper = whisper_quality(WORK / 'voice.mp3', info['normalized_text'],
                               config, DIST / 'pronunciacion_reporte.txt')
@@ -481,6 +489,10 @@ def make_timing(script):
         end = marks[cut + count]['start'] if cut + count < len(marks) else d
         start = max(0, start)
         end = min(d, max(start + 0.1, end))
+        if index == len(scenes) - 1:
+            # Keep the final B-roll moving through the brief musical outro;
+            # subtitles still end at the actual time Jorge finishes speaking.
+            end = video_seconds
         timed_scenes.append(dict(scene, start=round(start, 3),
                                  end=round(end, 3), scene_index=index))
         cut += count
@@ -489,7 +501,9 @@ def make_timing(script):
                  'words': [dict(m)]} for m in marks]
     script['timeline'] = timed_scenes
     script['captions'] = captions
-    script['duration'] = round(d, 3)
+    script['duration'] = video_seconds
+    script['voice_duration'] = round(d, 3)
+    script['ambient_outro_seconds'] = tail_seconds
     script['voice_engine'] = engine
     script['word_timing_method'] = alignment['method']
     save_json(WORK / 'script.json', script)
