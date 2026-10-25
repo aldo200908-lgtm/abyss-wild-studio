@@ -126,18 +126,24 @@ def verify_video(path, expected):
         raise RuntimeError('Plano B-roll no cubre 1080x1920: ' + str(path))
     if not path.exists() or path.stat().st_size < 10000:
         raise RuntimeError('Plano B-roll vacío: ' + str(path))
-    # Check representative frames, including beginning and final beat.
-    for at in (0, max(0, expected/2), max(0, expected-.13)):
-        result = subprocess.run(['ffmpeg', '-v', 'error', '-ss', f'{at:.3f}',
-                                 '-i', str(path), '-frames:v', '1', '-vf',
-                                 'scale=96:170', '-f', 'rawvideo', '-pix_fmt',
-                                 'rgb24', '-'], capture_output=True, check=True)
-        from io import BytesIO
-        if len(result.stdout) != 96*170*3:
-            raise RuntimeError('Fotograma faltante en ' + str(path))
-        im = Image.frombytes('RGB', (96, 170), result.stdout)
-        if max(ImageStat.Stat(im).stddev) < 5:
-            raise RuntimeError('Fotograma plano/negro en ' + str(path))
+    # Decode ALL output frames, not just 3 samples. Check at low spatial
+    # resolution to keep CI lightweight while guaranteeing no plain frame.
+    width, height = 64, 114
+    frame_bytes = width*height*3
+    result = subprocess.run(['ffmpeg', '-v', 'error', '-i', str(path),
+                             '-vf', f'fps={FPS},scale={width}:{height}',
+                             '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'],
+                            capture_output=True, check=True)
+    raw = result.stdout
+    if len(raw) < frame_bytes or len(raw) % frame_bytes:
+        raise RuntimeError('Video con fotogramas ausentes o incompletos')
+    for frame_number, start in enumerate(range(0,len(raw),frame_bytes)):
+        frame = Image.frombytes('RGB', (width,height),
+                                raw[start:start+frame_bytes])
+        stat = ImageStat.Stat(frame)
+        if max(stat.stddev) < 3 or max(stat.mean) < 4:
+            raise RuntimeError('Fotograma vacío/negro detectado en '
+                               f'{path.name}: cuadro {frame_number}')
 
 
 def make_mascots(dest):
