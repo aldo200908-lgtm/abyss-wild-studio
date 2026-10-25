@@ -14,6 +14,28 @@ PAUSE_PER_GROUP = 0.35
 ESTIMATE_MARGIN = 0.6
 MAX_PREVIEW_SECONDS = 43.5
 
+# Audio may finish a fraction of a second before the minimum video runtime.
+# Never insert silence BETWEEN clauses or change the natural Jorge voice.
+# A very short ambient/music-only outro (at most 0.35s) is allowed.
+MIN_NATURAL_VOICE_SECONDS = 29.75
+MIN_VIDEO_SECONDS = 30.10
+MAX_VIDEO_SECONDS = 45.0
+
+
+def video_duration_for_narration(spoken_seconds):
+    """Plan the complete Short without modifying the original narration.
+
+    Only a near-30s natural recording may receive a brief B-roll/music tail.
+    Truly short scripts are rejected; they need factual rewriting.
+    """
+    seconds = float(spoken_seconds)
+    if not MIN_NATURAL_VOICE_SECONDS <= seconds <= MAX_VIDEO_SECONDS:
+        raise ValueError(
+            f'Locución natural {seconds:.3f}s requiere ajustar el guion '
+            'verificado; no se rellenará con segundos de silencio.')
+    return round(max(seconds, MIN_VIDEO_SECONDS), 3)
+
+
 
 def spoken_word_count(scenes):
     return sum(len(palabras(normalizar(s['line']))) for s in scenes)
