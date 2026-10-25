@@ -44,6 +44,19 @@ class ViralVisualTests(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which('ffmpeg') and shutil.which('ffprobe'),
                          'FFmpeg required')
+    def test_black_video_is_rejected_even_when_resolution_is_correct(self):
+        import subprocess
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'black.mp4'
+            subprocess.run(['ffmpeg','-loglevel','error','-y','-f','lavfi',
+                            '-i','color=c=black:s=1080x1920:r=30:d=3',
+                            '-c:v','libx264','-preset','ultrafast',
+                            str(path)],check=True)
+            with self.assertRaisesRegex(RuntimeError, 'Fotograma vacío'):
+                verify_video(path,3)
+
+    @unittest.skipUnless(shutil.which('ffmpeg') and shutil.which('ffprobe'),
+                         'FFmpeg required')
     def test_zoompan_ffmpeg_outputs_filled_portrait_frames(self):
         with tempfile.TemporaryDirectory() as directory:
             source=Path(directory)/'source.png'
