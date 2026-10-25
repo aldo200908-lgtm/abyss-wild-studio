@@ -49,10 +49,28 @@ jobs:
           else
             python voice_bank.py --phrase "${VOICE_TEST_PHRASE:-$(python -c 'import json;print(json.load(open("config.json"))["bank_test_phrase"])')}"
           fi
+      - name: Verificar ZIP con las cinco voces
+        run: |
+          python - <<'PY'
+          import zipfile
+          from pathlib import Path
+          archive = Path('work/banco_voces_espanolas.zip')
+          if not archive.is_file():
+              raise SystemExit('Falta ZIP en work/banco_voces_espanolas.zip')
+          with zipfile.ZipFile(archive) as z:
+              files = z.namelist()
+              mp3 = sorted(n for n in files if n.lower().endswith('.mp3'))
+              infos = sorted(n for n in files if n.lower().endswith('_info.txt'))
+              if len(mp3) != 5 or len(infos) != 5:
+                  raise SystemExit(f'Banco incompleto: {len(mp3)} MP3 y {len(infos)} info')
+              if z.testzip() is not None:
+                  raise SystemExit('ZIP corrupto')
+              print(f'BANCO_VERIFICADO: {len(mp3)} voces y {len(infos)} fichas')
+          PY
       - name: Banco de voces para descargar
         uses: actions/upload-artifact@v4
         with:
           name: banco_voces_espanolas
-          path: banco_voces_espanolas.zip
+          path: work/banco_voces_espanolas.zip
           if-no-files-found: error
           retention-days: 7
