@@ -745,8 +745,11 @@ def choose_assets(script):
             for candidate in candidates:
                 distinct.setdefault(candidate['id'], candidate)
             inspected = 0
-            for candidate in distinct.values():
-                if inspected >= 12:
+            known_ids = {row['candidate']['id'] for row in approved}
+            ordered_candidates = sorted(
+                distinct.values(), key=lambda row: row['id'] in known_ids)
+            for candidate in ordered_candidates:
+                if inspected >= 8:
                     break
                 inspected += 1
                 try:
@@ -754,14 +757,33 @@ def choose_assets(script):
                     assessment = audit(index, scene, candidate, preview)
                     if assessment is None:
                         continue
-                    asset = materialize(candidate, raw, index, assessment)
-                    approved.append({'scene_index': index,
-                                     'candidate': candidate,
-                                     'asset': asset,
-                                     'raw_preview': raw,
-                                     'preview': preview})
+                    prior = next((item for item in approved
+                                  if item['candidate']['id'] == candidate['id']), None)
+                    if prior is not None:
+                        # Same candidate already downloaded and verified; reuse
+                        # only because THIS scene's audit has just passed.
+                        asset = dict(prior['asset'])
+                        focus = assessment.get('focal_point')
+                        if isinstance(focus, dict) and all(
+                                isinstance(focus.get(k), (int,float))
+                                and math.isfinite(focus[k])
+                                and 0 <= focus[k] <= 1 for k in ('x','y')):
+                            asset['focal_point'] = focus
+                        credited(candidate, index, asset['digest'])
+                        reused_this_shot = True
+                        reused += 1
+                        log(f'B-roll escena {index+1}: reutilizado recurso '
+                            f'ya descargado con nueva auditoría.')
+                    else:
+                        asset = materialize(candidate, raw, index, assessment)
+                        approved.append({'scene_index': index,
+                                         'candidate': candidate,
+                                         'asset': asset,
+                                         'raw_preview': raw,
+                                         'preview': preview})
+                        log(f'B-roll escena {index+1}: aprobado '
+                            f'{candidate["id"][:80]}')
                     scene_media[index] = asset
-                    log(f'B-roll escena {index+1}: aprobado {candidate["id"][:80]}')
                     break
                 except (OSError, ValueError, RuntimeError,
                         requests.RequestException, subprocess.CalledProcessError) as exc:
