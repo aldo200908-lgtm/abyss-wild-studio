@@ -4,14 +4,25 @@ Interfaz de una sola página HTML y renderizado remoto con GitHub Actions, Pytho
 
 ## Qué hace
 
-1. Investiga temas en Wikipedia en español y recupera imágenes de Wikimedia Commons.
+1. Investiga cualquier idea enciclopédica: convierte el tema o pregunta del usuario en búsquedas para Wikipedia en español e inglés, filtra fuentes relacionadas y recupera imágenes de Wikimedia Commons.
 2. Pide un guion JSON y una revisión factual a Gemini Flash-Lite por API gratuita.
 3. Rechaza guiones sin citas que respalden todas sus escenas (la validación por IA no sustituye revisión humana).
-4. Narra en español con `edge-tts`, capturando `WordBoundary` y comprobando 30–45 segundos.
+4. Narra en español con Piper TTS sin usar el servidor Edge; usa eSpeak NG si falla Piper, y comprueba 30–45 segundos. Los tiempos de subtítulos por palabra son aproximados.
 5. Busca imágenes CC0, dominio público, CC BY y CC BY-SA, y, opcionalmente, clips de Pexels. Usa visión Gemini para descartar coincidencias falsas. Si no hay coincidencia, usa gráficos tipográficos originales.
 6. Genera 1080 × 1920 / 30 fps con Remotion, subtítulos destacados, escenas breves y barra comparativa si hay longitud demostrada.
 7. Crea música ambiente original y efectos procedurales (sin música de terceros), mezcla en FFmpeg y verifica dimensiones, duración, volumen, tiempo de cortes y unicidad de recursos.
 8. Publica **solo archivos descargables en una GitHub Release pública**. Nunca sube nada a YouTube.
+
+
+## Temas personalizados: no solo Titanoboa
+
+ABYSS WILD **no está limitado a un animal o a videos anteriores**: puedes introducir nombres, preguntas, fenómenos científicos, hechos históricos, tecnología o una idea nueva. Ejemplos de temas: `¿Por qué brilla el mar de noche?`, `Cómo funciona un agujero negro`, `La Antártida`, `Historia de los teléfonos móviles` y `Titanoboa`.
+
+Desde GitHub Actions o la interfaz de Pages puedes cambiar `topic` cada vez, sin modificar código. El sistema convierte la solicitud en búsquedas en Wikipedia en **español e inglés**, pide a Gemini que escoja artículos cuyo asunto sea realmente relevante, extrae fragmentos citables y exige que el guion explique el tema, no un asunto tangencial. Las escenas se auditan tanto por respaldo factual como por enfoque editorial antes de producir el video. Las búsquedas no convierten el conocimiento de Gemini en fuente: cada afirmación debe apoyarse en un fragmento recuperado.
+
+**Limitación importante:** con solo Wikipedia/Wikimedia no se puede garantizar cubrir literalmente cualquier tema, noticia de hoy, dato privado, obra ficticia propia ni asuntos sin entradas enciclopédicas pertinentes. Si falta evidencia suficiente, el proceso se detiene y no fabrica hechos. Wikipedia es una referencia introductoria, no una investigación independiente ni garantía de exactitud. Revisa guion, imágenes y créditos antes de publicar.
+
+La primera pantalla deja «Titanoboa» como demostración, pero se puede reemplazar por cualquier otro texto. Para títulos de preguntas no se exige una coincidencia literal con el nombre de una página; por ejemplo, «¿Por qué brilla el mar de noche?» puede estudiarse consultando «Bioluminiscencia».
 
 ## Preparación en Android, paso por paso
 
