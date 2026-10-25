@@ -15,14 +15,19 @@ from xml.sax.saxutils import escape as xml_escape
 import numpy as np
 from spanish_voice_text import (normalizar, fonetizar, load_dictionary,
                                 palabras, grupos_de_frases, NUMBER, number_es)
+from narration_budget import MIN_NATURAL_VOICE_SECONDS
 
 class NarrationDurationError(RuntimeError):
     """Measured natural voice is outside the allowed video length."""
     def __init__(self, seconds):
         self.seconds = float(seconds)
+        correction = ('ampliar el guion verificado'
+                      if seconds < MIN_NATURAL_VOICE_SECONDS
+                      else 'acortar el guion verificado')
         super().__init__(
-            f'Locución española de {seconds:.1f}s fuera de 30–45s; '
-            'acortar el guion verificado sin acelerar la voz')
+            f'Locución española de {seconds:.1f}s fuera del rango útil '
+            f'({MIN_NATURAL_VOICE_SECONDS:.2f}–45s); {correction} '
+            'sin modificar artificialmente la velocidad.')
 
 
 VOICES = (
@@ -209,7 +214,9 @@ def render_native_voice(scenes, mp3_path, settings, dictionary, synth):
                     pos = next_pos
                 # Join the clauses immediately: no synthetic pause is added.
         seconds = offset / rate
-        if not 30 <= seconds <= 45:
+        # 29.75–30.00s remains natural narration: the visual/BGM timeline
+        # supplies only a sub-350ms outro. Never add intra-phrase silence.
+        if not MIN_NATURAL_VOICE_SECONDS <= seconds <= 45:
             raise NarrationDurationError(seconds)
         mp3_path = Path(mp3_path)
         mp3_path.parent.mkdir(parents=True, exist_ok=True)
