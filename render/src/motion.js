@@ -2,7 +2,7 @@
 // Matches motion_math.py: smoothstep(t), translateX in output pixels, cover-fit.
 export const W = 1080;
 export const H = 1920;
-export const CAPTION_TOP = 0.52;
+export const CAPTION_TOP = 0.50;
 export const CAPTION_WIDTH = 0.90;
 export const MAX_TEXT_PX = 900;
 
