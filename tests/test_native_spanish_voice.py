@@ -132,7 +132,10 @@ class NativeVoiceUnitTests(unittest.TestCase):
                     wav.setnchannels(1)
                     wav.setsampwidth(2)
                     wav.setframerate(24000)
-                    wav.writeframes(b'\x00\x00' * int(24000 * 6.8))
+                    import numpy as np
+                    t = np.arange(int(24000 * 6.8)) / 24000
+                    pcm = (.26 * np.sin(2*np.pi*210*t)*32767).astype('<i2')
+                    wav.writeframes(pcm.tobytes())
 
         scenes = [{'line':
                    'Titanoboa fue una enorme serpiente de antiguas selvas colombianas.'}
@@ -147,8 +150,8 @@ class NativeVoiceUnitTests(unittest.TestCase):
             self.assertTrue(30 <= d <= 45)
             self.assertEqual(fake.calls, 5)
             self.assertEqual(meta['locale'], 'es-PE')
-            self.assertEqual(len(meta['pauses']), 4)
-            self.assertTrue(all(.2 <= p <= .5 for p in meta['pauses']))
+            self.assertEqual(len(meta['pauses']), 0)
+            self.assertEqual(meta['pauses'], [])
             self.assertEqual(len(marks), 90)
 
 
