@@ -115,5 +115,43 @@ class NativeVoiceUnitTests(unittest.TestCase):
         self.assertTrue(suspects)
 
 
+    def test_phrase_wav_merge_without_azure_credentials(self):
+        import wave
+        from native_spanish_voice import render_native_voice
+        from spanish_voice_text import load_dictionary
+
+        class FakeSpanish:
+            def __init__(self):
+                self.calls = 0
+
+            def synthesize(self, text, target, voice, rate):
+                assert voice == 'es-PE-AlexNeural'
+                assert -4 <= rate <= 0
+                self.calls += 1
+                with wave.open(str(target), 'wb') as wav:
+                    wav.setnchannels(1)
+                    wav.setsampwidth(2)
+                    wav.setframerate(24000)
+                    wav.writeframes(b'\x00\x00' * int(24000 * 6.8))
+
+        scenes = [{'line':
+                   'Titanoboa fue una enorme serpiente de antiguas selvas colombianas.'}
+                  for _ in range(10)]
+        with tempfile.TemporaryDirectory() as tmp:
+            dictionary = load_dictionary(
+                Path(__file__).resolve().parents[1] / 'pronunciacion.json')
+            fake = FakeSpanish()
+            marks, d, meta = render_native_voice(
+                scenes, Path(tmp) / 'voice.mp3', CONFIG, dictionary, fake)
+            self.assertTrue((Path(tmp) / 'voice.mp3').stat().st_size > 1000)
+            self.assertTrue(30 <= d <= 45)
+            self.assertEqual(fake.calls, 5)
+            self.assertEqual(meta['locale'], 'es-PE')
+            self.assertEqual(len(meta['pauses']), 4)
+            self.assertTrue(all(.2 <= p <= .5 for p in meta['pauses']))
+            self.assertEqual(len(marks), 100)
+
+
+
 if __name__ == '__main__':
     unittest.main()
