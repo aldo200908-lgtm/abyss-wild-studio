@@ -43,7 +43,8 @@ class TopicFocusTests(unittest.TestCase):
         ]
         self.assertEqual(
             topic_problems('Titanoboa', [{'line': s} for s in lines],
-                           title='Titanoboa: serpiente gigante'), [])
+                           title='Titanoboa: serpiente gigante',
+                           anchors=['serpiente', 'fósiles', 'reptil', 'gigante']), [])
 
     def test_rejects_missing_topic_in_opening_and_final_question(self):
         scenes = [{'line': 'Otro hecho sin mencionar al sujeto'} for _ in range(13)]
