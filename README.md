@@ -7,7 +7,7 @@ Interfaz de una sola página HTML y renderizado remoto con GitHub Actions, Pytho
 1. Investiga cualquier idea enciclopédica: convierte el tema o pregunta del usuario en búsquedas para Wikipedia en español e inglés, filtra fuentes relacionadas y recupera imágenes de Wikimedia Commons.
 2. Pide un guion JSON y una revisión factual a Gemini Flash-Lite por API gratuita.
 3. Rechaza guiones sin citas que respalden todas sus escenas (la validación por IA no sustituye revisión humana).
-4. Narra en español con Piper TTS sin usar el servidor Edge; usa eSpeak NG si falla Piper, y comprueba 30–45 segundos. Los tiempos de subtítulos por palabra son aproximados.
+4. Narra con Azure AI Speech mediante una voz neural nativa `es-*` validada en `config.json`, sin fallback oculto. Whisper `small` verifica al menos 92 % de coincidencia y FFmpeg mide LUFS y pico estimado.
 5. Busca imágenes CC0, dominio público, CC BY y CC BY-SA, y, opcionalmente, clips de Pexels. Usa visión Gemini para descartar coincidencias falsas. Si no hay coincidencia, usa gráficos tipográficos originales.
 6. Genera 1080 × 1920 / 30 fps con Remotion, subtítulos destacados, escenas breves y barra comparativa si hay longitud demostrada.
 7. Crea música ambiente original y efectos procedurales (sin música de terceros), mezcla en FFmpeg y verifica dimensiones, duración, volumen, tiempo de cortes y unicidad de recursos.
@@ -72,7 +72,7 @@ GitHub → repositorio → **Actions → ABYSS WILD — Generador de Shorts → 
 - **Error 404 al descargar:** espera a que el workflow esté en estado `success`; verifica que exista la Release.
 - **Gemini devuelve 429:** cuenta gratuita agotada temporalmente. Reintentos automáticos hasta cuatro intentos por solicitud. Espera que se restablezca el cupo.
 - **No se consigue un guion verificable o medios correctos:** el proceso cancela o usa infografías, nunca reemplaza un animal prehistórico por otro sin etiquetar.
-- **edge-tts falla:** es un servicio de voz en línea no oficial; Microsoft puede modificar o bloquear el acceso. Reintenta posteriormente o cambia la voz mediante `EDGE_VOICE` como variable de entorno del workflow.
+- **Voz Azure falla o faltan credenciales:** necesitas `AZURE_SPEECH_KEY` y `AZURE_SPEECH_REGION` y un recurso Azure AI Speech con voz neural disponible. No se sustituye automáticamente por Piper, eSpeak ni voces inglesas. Consulta [README_VOZ.md](README_VOZ.md).
 - **Instalación Node/Chromium tarda:** la caché npm/pip reduce nuevas instalaciones, pero el navegador Remotion y los codecs pueden necesitar descargas.
 
 ## Riesgos y supuestos expresos
@@ -82,13 +82,13 @@ GitHub → repositorio → **Actions → ABYSS WILD — Generador de Shorts → 
 3. El selector realiza **dos intentos por escena** para encontrar y validar recursos. Si fallan, transforma **esa escena visual** en infografía. Errores de FFmpeg/Remotion o desbordes ópticos finales detienen el workflow: no existe una reparación de frames de video ya renderizado sin re-renderizar la composición. La seguridad de subtítulos se basa en límites de texto y CSS, no OCR.
 4. En Wikimedia, CC BY-SA puede imponer obligaciones de atribución y condiciones de compartir igual a material adaptado: conserva los créditos y revisa las obligaciones según el uso concreto. Pexels es gratis para uso permitido, no CC0.
 5. Pexels se usa si se proporciona clave válida; contenido insuficiente se reemplaza por gráficos originales.
-6. La versión requiere una primera instalación de paquetes desde Internet; no fue sometida a una ejecución real completa con tus propias claves en esta entrega.
+6. La versión requiere instalar paquetes y descargar Whisper `small` desde Internet; la voz nativa de Azure aún no se ha probado con tus claves. El flujo fallará expresamente si no se configura Azure Speech.
 
-### Voz sin bloqueos de edge-tts
+### Voces españolas nativas — configuración actual
 
-La síntesis predeterminada usa **Piper TTS 1.8.0** con el modelo `es_MX-ald-medium` (español mexicano). El modelo se descarga en GitHub Actions y se almacena en caché cuando el job finaliza con éxito. Si no puede cargarse, el sistema usa **eSpeak NG** local como respaldo: funcionará sin la conexión WebSocket de Microsoft, aunque su voz suena menos natural. No se requieren nuevas claves ni pagos. Los subtítulos conservan las palabras originales, pero sus tiempos por palabra se **estiman proporcionalmente dentro de cada escena narrada**; no son WordBoundary exactos ni una alineación fonética certificada. Comprueba la sincronía visual del MP4 antes de publicarlo.
+Esta versión **requiere dos Secrets de Azure Speech**, además de la clave de Gemini: `AZURE_SPEECH_KEY` y `AZURE_SPEECH_REGION`. Elige `es-PE-AlexNeural`, `es-PE-CamilaNeural`, `es-CO-GonzaloNeural`, `es-CO-SalomeNeural` o `es-MX-JorgeNeural` en `config.json`. El sistema valida el Locale devuelto por Azure. No existe fallback automático.
 
-Modelo Piper: https://huggingface.co/rhasspy/piper-voices/tree/main/es/es_MX/ald/medium (consulta su MODEL_CARD para atribución y licencias). El paquete Piper está disponible bajo GPL-3.0-or-later y el repositorio de modelos indica licencia MIT; hay condiciones independientes por voz.
+Lee [README_VOZ.md](README_VOZ.md) para habilitar el recurso Speech, ejecutar [el banco de voces](.github/workflows/voice_test.yml), editar `pronunciacion.json` (30 términos) y descargar el reporte Whisper. Sin credenciales Azure, la producción cancela la ejecución antes de sintetizar; los límites/cuotas y eventuales cargos dependen del recurso elegido.
 
 ### Recuperación de guiones sin perder verificación
 
