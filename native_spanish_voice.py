@@ -163,13 +163,12 @@ def render_native_voice(scenes, mp3_path, settings, dictionary, synth):
     """Voice source is normalized Spanish, not phonetic guesses in subtitles.
 
     Groups are 8-18 words; WAV snippets are combined using PCM and FFmpeg.
-    Pause durations are reproducible pseudo-random values within 0.2..0.5.
+    No silent gap is inserted between FFmpeg-trimmed clauses.
     """
     normalized = [normalizar(s['line']) for s in scenes]
     groups = grupos_de_frases(normalized,
                                int(settings['phrase_min_words']),
                                int(settings['phrase_max_words']))
-    rng = random.Random(5017)
     wavs, group_map = [], []
     with tempfile.TemporaryDirectory(prefix='abyss_azure_') as tempdir:
         for index, group in enumerate(groups):
@@ -178,7 +177,9 @@ def render_native_voice(scenes, mp3_path, settings, dictionary, synth):
             path = Path(tempdir) / f'phrase_{index:02d}.wav'
             synth.synthesize(spoken, path, settings['voice'],
                             settings['rate_percent'])
-            wavs.append(pcm_data(path))
+            trimmed = Path(tempdir) / f'phrase_{index:02d}_trimmed.wav'
+            trim_tts_wav(path, trimmed)
+            wavs.append(pcm_data(trimmed))
             group_map.append([i for i, _ in group])
         rates = {r for r, _ in wavs}
         if len(rates) != 1:
@@ -206,13 +207,7 @@ def render_native_voice(scenes, mp3_path, settings, dictionary, synth):
                     next_pos = pos + (end - begin) * weight / length
                     ranges[idx] = (pos, next_pos)
                     pos = next_pos
-                if ix < len(wavs) - 1:
-                    pause = rng.uniform(settings['pause_min_seconds'],
-                                        settings['pause_max_seconds'])
-                    gap_samples = int(rate * pause)
-                    output.writeframes(b'\x00\x00' * gap_samples)
-                    offset += gap_samples
-                    gaps.append(round(pause, 3))
+                # Join the clauses immediately: no synthetic pause is added.
         seconds = offset / rate
         if not 30 <= seconds <= 45:
             raise NarrationDurationError(seconds)
