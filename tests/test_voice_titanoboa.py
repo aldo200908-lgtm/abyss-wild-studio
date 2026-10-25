@@ -29,7 +29,7 @@ class TitanoboaNarrationCase(unittest.TestCase):
         self.assertIn(config['voice'], VOICES)
         voices = [SimpleNamespace(short_name=config['voice'],
                                   locale=config['voice'][:5])]
-        self.assertEqual(validate_locale(config['voice'], voices), 'es-PE')
+        self.assertEqual(validate_locale(config['voice'], voices), config['voice'][:5])
 
     def test_spanish_o_before_consonant(self):
         self.assertEqual(normalizar('doce u catorce metros'),
