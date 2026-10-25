@@ -89,3 +89,11 @@ GitHub → repositorio → **Actions → ABYSS WILD — Generador de Shorts → 
 La síntesis predeterminada usa **Piper TTS 1.8.0** con el modelo `es_MX-ald-medium` (español mexicano). El modelo se descarga en GitHub Actions y se almacena en caché cuando el job finaliza con éxito. Si no puede cargarse, el sistema usa **eSpeak NG** local como respaldo: funcionará sin la conexión WebSocket de Microsoft, aunque su voz suena menos natural. No se requieren nuevas claves ni pagos. Los subtítulos conservan las palabras originales, pero sus tiempos por palabra se **estiman proporcionalmente dentro de cada escena narrada**; no son WordBoundary exactos ni una alineación fonética certificada. Comprueba la sincronía visual del MP4 antes de publicarlo.
 
 Modelo Piper: https://huggingface.co/rhasspy/piper-voices/tree/main/es/es_MX/ald/medium (consulta su MODEL_CARD para atribución y licencias). El paquete Piper está disponible bajo GPL-3.0-or-later y el repositorio de modelos indica licencia MIT; hay condiciones independientes por voz.
+
+### Recuperación de guiones sin perder verificación
+
+En caso de que un borrador use pronombres o sinónimos (por ejemplo «la serpiente» tras mencionar «Titanoboa»), ya no se exige repetir palabras del tema en un porcentaje fijo de escenas. El gancho, título y cierre siguen protegiendo la identidad de temas de una sola palabra, y un auditor de Gemini comprueba por separado la pertinencia temática y el respaldo factual de cada frase.
+
+Si el auditor rechaza una o varias escenas, **solo esas frases se reescriben** con los fragmentos de fuente disponibles; la nueva versión se vuelve a auditar. Hay un máximo de dos tandas de reparación por borrador y tres borradores por solicitud. Una reparación no verificada nunca se publica. Si no hay evidencia suficiente, la ejecución fallará deliberadamente para evitar un Short engañoso.
+
+Las correcciones se prueban con `python -m unittest discover -s tests` desde GitHub Actions; estas pruebas no sustituyen ejecutar un video real con Gemini y revisar su resultado.
