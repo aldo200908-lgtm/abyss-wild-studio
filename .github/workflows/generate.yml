@@ -63,6 +63,8 @@ jobs:
           node --input-type=module -e "import {ensureBrowser} from '@remotion/renderer'; await ensureBrowser();"
       - name: 4b · Probar formatos JSON de Gemini
         run: python -m unittest discover -s tests -p 'test_*.py' -v
+      - name: 4bb · Validar geometría Remotion
+        run: node --test render/tests/motion.test.mjs
       - name: 4c · Validar voz española y secretos
         run: |
           python -c "from native_spanish_voice import config_from; config_from('config.json')"
