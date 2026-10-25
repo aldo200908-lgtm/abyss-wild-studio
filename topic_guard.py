@@ -1,49 +1,64 @@
-"""Deterministic editorial gate: a sourced script must still be ON TOPIC.
+"""Generic topic focus checks for any subject or question.
 
-Not a semantic proof; prevents obvious topic drift like a Titanoboa
-video about coal beds and mining economics.
+A lexical gate is a fast defense against obvious drift. The independent
+Gemini relevance auditor in pipeline.py provides a semantic gate as well.
+Neither constitutes a guarantee of factual correctness.
 """
 import re
-import unicodedata
+from topic_research import fold, keywords
 
 
 def canon(value):
-    value = unicodedata.normalize('NFKD', str(value).lower())
-    return ''.join(c for c in value if c.isalnum() and
-                   not unicodedata.combining(c))
+    return ''.join(c for c in fold(value) if c.isalnum())
 
 
-def topic_problems(topic, scenes, title=''):
+def stems(value):
+    # Light morphology tolerance (serpiente/serpientes, estrellas/estrella).
+    return {w[:6] if len(w) > 7 else w[:5] if len(w) > 5 else w
+            for w in keywords(value) if len(w) >= 4}
+
+
+def topic_problems(topic, scenes, title='', anchors=None):
     problems = []
-    subject = canon(topic)
-    if not subject or not isinstance(scenes, list) or len(scenes) < 3:
-        return ['Tema o lista de escenas inválidos']
-    lines = [str(s.get('line', '')) if isinstance(s, dict) else ''
-             for s in scenes]
-    if subject not in canon(' '.join(lines[:3])):
-        problems.append('El gancho inicial no menciona el tema solicitado')
-    if subject not in canon(lines[-1]):
-        problems.append('La pregunta final no trata directamente del tema')
-    if title and subject not in canon(title):
-        problems.append('El título no contiene el tema')
+    if not isinstance(topic, str) or not topic.strip():
+        return ['Tema vacío']
+    if not isinstance(scenes, list) or len(scenes) < 3:
+        return ['Escenas insuficientes']
+    if any(not isinstance(s, dict) or not isinstance(s.get('line'), str)
+           for s in scenes):
+        return ['Escenas con formato incorrecto']
+    lines = [s['line'] for s in scenes]
+    if not isinstance(anchors, list):
+        anchors = []
+    subject = keywords(topic)
+    # A single named subject must appear by name in title, hook and question.
+    proper_subject = len(subject) == 1 and len(subject[0]) >= 5
+    if proper_subject:
+        word = canon(subject[0])
+        if word not in canon(' '.join(lines[:3])):
+            problems.append('El gancho no menciona el tema solicitado')
+        if word not in canon(lines[-1]):
+            problems.append('La pregunta no menciona el tema')
+        if title and word not in canon(title):
+            problems.append('El título no menciona el tema')
+    anchors = [topic] + anchors[:6]
+    keyset = set().union(*(stems(a) for a in anchors))
+    if not keyset:
+        return ['No hay palabras clave para validar el enfoque']
 
-    if subject == 'titanoboa':
-        # The video must be ABOUT the giant snake, not the mining site
-        # where the fossils were found. A single geographical aside is fine.
-        distractors = ('carbón', 'minería', 'económico', 'yacimiento',
-                       'lechos', 'explotado', 'formación se subdivide',
-                       'recurso mineral', 'campos de hulla')
-        drift = sum(any(canon(term) in canon(line) for term in distractors)
-                    for line in lines)
-        if drift >= 2:
-            problems.append(
-                f'{drift} escenas centradas en carbón/minería, no Titanoboa')
-        scientific = ('titanoboa', 'serpiente', 'reptil', 'vértebra',
-                      'fósil', 'gigante', 'longitud', 'presa', 'tamaño',
-                      'metros', 'pesaba', 'cuerpo', 'selva')
-        relevant = sum(any(canon(term) in canon(line) for term in scientific)
-                       for line in lines[:-1])
-        if relevant < 6:
-            problems.append(
-                f'Solo {relevant} escenas describen al animal o su hábitat')
+    def score(sentence):
+        return len(stems(sentence) & keyset)
+
+    if not any(score(line) > 0 for line in lines[:3]):
+        problems.append('El inicio no está conectado con el asunto solicitado')
+    if not any(score(line) > 0 for line in lines[-2:]):
+        problems.append('El final no está conectado con el asunto solicitado')
+    # The audience should not get 12 scenes of background context.
+    relevant = sum(score(line) > 0 for line in lines[:-1])
+    needed = max(3, (len(lines) - 1) // 3)
+    if relevant < needed:
+        problems.append(f'Solo {relevant} de {len(lines)-1} escenas contienen '
+                        'conceptos centrales del tema')
+    if title and not score(title):
+        problems.append('Título sin relación léxica con el tema')
     return problems
