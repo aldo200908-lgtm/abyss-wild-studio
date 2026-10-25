@@ -78,7 +78,7 @@ class CameraMotionTests(unittest.TestCase):
     def test_caption_center_and_single_word_width(self):
         layout = {'y': CAPTION_Y, 'max_width': CAPTION_SAFE_WIDTH,
                   'max_text_px': MAX_CAPTION_TEXT_PX}
-        self.assertEqual(CAPTION_Y * H, 998.4)
+        self.assertAlmostEqual(CAPTION_Y * H, 998.4, places=5)
         self.assertLessEqual(MAX_CAPTION_TEXT_PX + 12, CAPTION_SAFE_WIDTH * W)
         captions = [{'start': 0, 'end': .5,
                      'words': [{'start': 0, 'end': .5,
