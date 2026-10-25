@@ -17,6 +17,11 @@ jobs:
         with:
           python-version: '3.11'
           cache: pip
+      - name: Install FFmpeg for audio regression tests
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends ffmpeg
+          command -v ffmpeg && command -v ffprobe
       - name: Install Python packages
         run: python -m pip install -r requirements.txt
       - name: Verify Python syntax
