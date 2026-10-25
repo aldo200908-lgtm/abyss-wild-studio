@@ -72,3 +72,9 @@ GitHub → repositorio → **Actions → ABYSS WILD — Generador de Shorts → 
 4. En Wikimedia, CC BY-SA puede imponer obligaciones de atribución y condiciones de compartir igual a material adaptado: conserva los créditos y revisa las obligaciones según el uso concreto. Pexels es gratis para uso permitido, no CC0.
 5. Pexels se usa si se proporciona clave válida; contenido insuficiente se reemplaza por gráficos originales.
 6. La versión requiere una primera instalación de paquetes desde Internet; no fue sometida a una ejecución real completa con tus propias claves en esta entrega.
+
+### Voz sin bloqueos de edge-tts
+
+La síntesis predeterminada usa **Piper TTS 1.8.0** con el modelo `es_MX-ald-medium` (español mexicano). El modelo se descarga en GitHub Actions y se almacena en caché cuando el job finaliza con éxito. Si no puede cargarse, el sistema usa **eSpeak NG** local como respaldo: funcionará sin la conexión WebSocket de Microsoft, aunque su voz suena menos natural. No se requieren nuevas claves ni pagos. Los subtítulos conservan las palabras originales, pero sus tiempos por palabra se **estiman proporcionalmente dentro de cada escena narrada**; no son WordBoundary exactos ni una alineación fonética certificada. Comprueba la sincronía visual del MP4 antes de publicarlo.
+
+Modelo Piper: https://huggingface.co/rhasspy/piper-voices/tree/main/es/es_MX/ald/medium (consulta su MODEL_CARD para atribución y licencias). El paquete Piper está disponible bajo GPL-3.0-or-later y el repositorio de modelos indica licencia MIT; hay condiciones independientes por voz.
