@@ -22,6 +22,8 @@ import wave
 import numpy as np
 import requests
 from PIL import Image
+from motion_math import (apply_motion_plans, validate_motion, validate_captions,
+                         CAPTION_Y, CAPTION_SAFE_WIDTH, MAX_CAPTION_TEXT_PX)
 from response_shapes import normalize_script_payload, normalize_audit_payload
 from native_spanish_voice import (AzureSpanishSpeech, config_from, render_native_voice,
                                   whisper_quality, spectral_high_frequency_ratio)
@@ -420,17 +422,9 @@ def make_timing(script):
         timed_scenes.append(dict(scene, start=round(start, 3),
                                  end=round(end, 3), scene_index=index))
         cut += count
-    captions = []
-    for mark in marks:
-        if (captions and len(captions[-1]['words']) < 3 and
-                sum(len(w['text']) for w in captions[-1]['words'])
-                + len(mark['text']) <= 17 and
-                mark['start'] - captions[-1]['start'] < .85):
-            captions[-1]['words'].append(mark)
-            captions[-1]['end'] = mark['end']
-        else:
-            captions.append({'start': mark['start'], 'end': mark['end'],
-                             'words': [mark]})
+    # Strictly one subtitle per spoken word.
+    captions = [{'start': m['start'], 'end': m['end'],
+                 'words': [dict(m)]} for m in marks]
     script['timeline'] = timed_scenes
     script['captions'] = captions
     script['duration'] = round(d, 3)
@@ -536,9 +530,13 @@ Elemento visual solicitado: {scene.get('visual_query', '')}
 Tipo esperado: {scene.get('visual_type', 'infographic')}
 Tema general: {os.getenv('TOPIC', 'Titanoboa')}
 Rechaza imágenes del sujeto equivocado, versiones genéricas engañosas, y estos elementos en particular: {', '.join(scene.get('visual_exclusions', [])) or 'representaciones no verificables'}.
-Si es documental fósil, no confundir reconstrucción con fósil auténtico. Si es paisaje de apoyo, acepta solo si la frase describe el ambiente (no el animal desaparecido). Respuesta JSON: {{"match":true/false}}. Ante incertidumbre, false.'''
+Si es documental fósil, no confundir reconstrucción con fósil auténtico. Si es paisaje de apoyo, acepta solo si la frase describe el ambiente (no el animal desaparecido). Para fotografía aprobada identifica coordenadas normalizadas del sujeto,
+focal_point.x y focal_point.y entre cero y uno. Si no puedes
+identificarlo, devuelve focal_point null; se usará saliencia.
+Respuesta JSON: {{"match":true/false,"focal_point":{{"x":0.5,"y":0.5}}}}.
+Ante incertidumbre, match false.'''
     answer = gemini.generate(prompt, photo=preview, temperature=0)
-    return isinstance(answer, dict) and answer.get('match') is True
+    return answer if isinstance(answer, dict) and answer.get('match') is True else None
 
 
 def choose_assets(script):
@@ -573,8 +571,16 @@ def choose_assets(script):
             try:
                 preview_raw = fetch_bytes(candidate['preview'], max_mb=6)
                 preview = image_preview(preview_raw)
-                if not approve_visual(gemini, scene, candidate, preview):
+                approval = approve_visual(gemini, scene, candidate, preview)
+                if not approval:
                     continue
+                focus = approval.get('focal_point')
+                if (isinstance(focus, dict) and
+                        all(type(focus.get(k)) in (int, float) and
+                            math.isfinite(focus[k]) and 0 <= focus[k] <= 1
+                            for k in ('x', 'y'))):
+                    scene['focal_point'] = {
+                        'x': float(focus['x']), 'y': float(focus['y'])}
                 raw = preview_raw if candidate['type'] == 'image' else fetch_bytes(candidate['download'])
                 digest = hashlib.sha256(raw).hexdigest()
                 if digest in used_hashes:
@@ -586,13 +592,22 @@ def choose_assets(script):
                     im.thumbnail((1400, 1800))
                     filename = f'{idx:02d}.jpg'
                     im.save(MEDIA / filename, 'JPEG', quality=87)
+                    media_width, media_height = im.size
                 else:
                     filename = f'{idx:02d}.mp4'
                     (MEDIA / filename).write_bytes(raw)
                     if duration(MEDIA / filename) < 3:
                         (MEDIA / filename).unlink()
                         continue
-                scene['asset'] = {'file': filename, 'type': candidate['type'], 'id': candidate['id']}
+                    stream = next((x for x in ffprobe(MEDIA / filename)['streams']
+                                   if x.get('codec_type') == 'video'), {})
+                    media_width, media_height = (int(stream.get('width', 0)),
+                                                 int(stream.get('height', 0)))
+                if media_width < 1 or media_height < 1:
+                    raise ValueError('Dimensiones visuales desconocidas')
+                scene['asset'] = {'file': filename, 'type': candidate['type'],
+                                  'id': candidate['id'], 'width': media_width,
+                                  'height': media_height}
                 scene['label'] = ('ILUSTRACIÓN' if visual == 'reconstruction' else
                                   'ARCHIVO DE APOYO' if visual == 'landscape' else 'FÓSIL / DOCUMENTO')
                 used_ids.add(candidate['id'])
@@ -623,9 +638,17 @@ def choose_assets(script):
                 beat['visual_type'] = 'infographic'
                 beat['label'] = 'DATO VERIFICADO'
             beats.append(beat)
-    export = {'topic': script['topic'], 'title': script.get('title', script['topic']),
+    apply_motion_plans(beats, script['topic'], MEDIA)
+    pan_count = validate_motion(beats)
+    caption_layout = {'y': CAPTION_Y, 'max_width': CAPTION_SAFE_WIDTH,
+                      'max_text_px': MAX_CAPTION_TEXT_PX}
+    caption_count = validate_captions(script['captions'], caption_layout)
+    log(f'Cámara: {pan_count} paneos alternados; '
+        f'{caption_count} subtítulos de una palabra.')
+    export = {'topic': script['topic'],
+              'title': script.get('title', script['topic']),
               'duration': script['duration'], 'fps': FPS, 'beats': beats,
-              'captions': script['captions']}
+              'captions': script['captions'], 'caption_layout': caption_layout}
     save_json(PUBLIC / 'data.json', export)
     save_json(WORK / 'script.json', script)
     log(f'Visuales: {len(credits)} medios acreditados y {len(beats)} cambios de escena')
@@ -714,10 +737,10 @@ def validate():
     assert len({c['id'] for c in script['credits']}) == len(script['credits']), 'Medio repetido'
     assert all(0 <= s['start'] < s['end'] <= d + .1 for s in data['beats']), 'Beat fuera de rango'
     assert max(s['end'] - s['start'] for s in data['beats']) <= 2.86, 'Corte >2.85s'
-    assert all(1 <= len(c['words']) <= 3 for c in data['captions']), 'Subtítulos de >3 palabras'
-    assert all(sum(len(w['text']) for w in c['words']) <= 21 for c in data['captions']), 'Subtítulo muy ancho'
-    # Layout checks are input and CSS invariants, not a rendered optical/OCR audit.
-    # Remotion uses width=80%, overflowWrap, and reserved 280px safe margins.
+    validate_motion(data['beats'])
+    validate_captions(data['captions'], data['caption_layout'])
+    # Geometric bounds are checked using the same camera math as Remotion.
+    # This does not replace an optical assessment of individual frames.
     lufs = measured_lufs(path)
     assert -16 <= lufs <= -12, f'Volumen {lufs:.1f} LUFS fuera de tolerancia'
     # True-peak approximation by resampling to 176.4kHz (~4x).
