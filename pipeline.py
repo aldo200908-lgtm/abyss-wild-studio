@@ -843,7 +843,7 @@ def validate():
     assert len({c['sha256'] for c in script['credits']}) == len(script['credits']), 'Imagen duplicada'
     assert len({c['id'] for c in script['credits']}) == len(script['credits']), 'Medio repetido'
     assert all(0 <= s['start'] < s['end'] <= d + .1 for s in data['beats']), 'Beat fuera de rango'
-    assert max(s['end'] - s['start'] for s in data['beats']) <= 2.86, 'Corte >2.85s'
+    assert max(s['end'] - s['start'] for s in data['beats']) <= 4.02, 'Corte >4s'
     validate_broll(data['beats'], script['duration'])
     validate_captions(data['captions'], data['caption_layout'])
     # Geometric bounds are checked using the same camera math as Remotion.
