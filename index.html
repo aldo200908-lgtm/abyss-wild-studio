@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#071825">
+<title>ABYSS WILD · Shorts Studio</title>
+<style>
+:root{color-scheme:dark;font-family:system-ui,-apple-system,Roboto,sans-serif;background:#06121c;color:#f2f8fa}
+*{box-sizing:border-box}body{margin:0;padding:22px 16px 70px;background:radial-gradient(circle at top,#173b49 0,#06121c 56%);min-height:100vh}
+main{max-width:560px;margin:0 auto}.logo{letter-spacing:4px;color:#72dddb;font-weight:900;font-size:13px}
+h1{font-size:clamp(34px,9vw,49px);line-height:1.02;margin:16px 0 8px}p{line-height:1.5;color:#9fb9c6}
+.card{background:#122535d9;border:1px solid #2a4c59;border-radius:20px;padding:20px;margin-top:20px;box-shadow:0 12px 35px #0005}
+label{display:block;font-weight:800;font-size:13px;letter-spacing:.4px;margin:17px 0 8px}
+input{width:100%;padding:14px 13px;border:1px solid #567080;border-radius:11px;background:#081c29;color:white;font-size:16px;outline:none}
+input:focus{border-color:#5ce2cf}small{display:block;color:#a9c1c9;line-height:1.45;margin-top:8px}
+button{width:100%;border:0;border-radius:14px;background:#f3cc40;color:#17212a;font-weight:900;font-size:17px;cursor:pointer;padding:15px;margin-top:22px}
+button:disabled{opacity:.5;cursor:not-allowed}a.download{display:block;background:#0f3542;padding:14px;margin-top:10px;border:1px solid #39727f;border-radius:12px;color:#e6fbff;text-decoration:none;font-weight:800}
+.hidden{display:none!important}#status{white-space:pre-line;color:#cbe5e4;font-weight:700}#error{color:#ff9d9d;white-space:pre-line}
+.bar{height:8px;background:#324b59;border-radius:12px;overflow:hidden;margin:16px 0}.bar>div{height:100%;width:0%;background:#f3cc40;transition:width .4s}
+footer{font-size:12px;color:#80a2ac;margin-top:30px}a{color:#75e5e0}.warning{background:#382b19;border:1px solid #8b6935;border-radius:11px;padding:13px;color:#ffe6ae;font-size:13px}
+</style>
+</head>
+<body><main>
+<div class="logo">◉ ABYSS WILD / SHORTS STUDIO</div>
+<h1>De una idea<br>a un Short.</h1>
+<p>Investiga, escribe, narra, edita y prepara tu video vertical. Tú decides cuándo publicarlo.</p>
+<div class="card">
+  <label for="topic">TEMA DEL VIDEO</label>
+  <input id="topic" maxlength="100" value="Titanoboa" autocomplete="off" placeholder="Ejemplo: Titanoboa">
+  <label for="owner">USUARIO DE GITHUB</label>
+  <input id="owner" autocapitalize="off" spellcheck="false" placeholder="tu-usuario">
+  <label for="repo">REPOSITORIO PÚBLICO</label>
+  <input id="repo" autocapitalize="off" spellcheck="false" value="abyss-wild-studio">
+  <label for="token">TOKEN FINE-GRAINED (ACTIONS: READ/WRITE)</label>
+  <input id="token" type="password" autocomplete="off" placeholder="github_pat_...">
+  <small>El token se guarda únicamente en el localStorage de este navegador y se envía a api.github.com. No se incluye en el repositorio.</small>
+  <button id="generate">▶ GENERAR SHORT</button>
+  <div id="error" role="alert"></div>
+</div>
+<div class="card hidden" id="progressPanel">
+  <div class="logo">ESTADO EN VIVO</div>
+  <div class="bar"><div id="progress"></div></div>
+  <div id="status" aria-live="polite">Preparando solicitud...</div>
+  <p><a id="runLink" href="#" rel="noopener noreferrer" target="_blank">Ver registro en GitHub Actions</a></p>
+</div>
+<div class="card hidden" id="downloads">
+  <div class="logo">ENTREGA COMPLETA</div>
+  <h2>Tu Short está listo</h2>
+  <div id="downloadLinks"></div>
+  <small>Los enlaces conducen a archivos de una GitHub Release pública. No se publicó nada en YouTube.</small>
+</div>
+<div class="card warning">Para evitar gasto inesperado, usa GitHub Actions en un repositorio público y la API de Gemini en su nivel gratuito. Las imágenes y los resultados publicados como Releases serán visibles al público.</div>
+<footer>Acceso directo en Android: Chrome → menú ⋮ → Añadir a pantalla de inicio. Este acceso directo requiere internet.</footer>
+</main>
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const keys = ['owner','repo','token'];
+for (const key of keys) $(key).value = localStorage.getItem('abyss_'+key) || $(key).value;
+let timer = null;
+let activeRun = null;
+const FILES = ['video.mp4','guion.txt','fuentes.txt','creditos.txt','descripcion.txt','reporte.json'];
+function error(text){$('error').textContent=text || '';}
+function status(text, percent){$('status').textContent=text; $('progress').style.width=percent+'%';}
+function stop(){if(timer){clearInterval(timer);timer=null;} $('generate').disabled=false;}
+function validName(x){return /^[A-Za-z0-9_.-]{1,100}$/.test(x) && x!=='.' && x!=='..';}
+async function github(path, options={}){
+  const response=await fetch('https://api.github.com'+path,{
+    ...options,headers:{'Accept':'application/vnd.github+json',
+      'Authorization':'Bearer '+$('token').value.trim(),
+      'X-GitHub-Api-Version':'2026-03-10',
+      'Content-Type':'application/json',...(options.headers||{})}
+  });
+  if (!response.ok){
+    const txt=await response.text();
+    throw new Error('GitHub HTTP '+response.status+': '+txt.slice(0,250));
+  }
+  if(response.status===204)return {};
+  return await response.json();
+}
+async function poll(){
+  if(!activeRun)return;
+  const {owner,repo,id}=activeRun;
+  const root=`/repos/${owner}/${repo}/actions/runs/${id}`;
+  try{
+    const [run,jobData]=await Promise.all([github(root),github(root+'/jobs?per_page=25')]);
+    const jobs=jobData.jobs||[];
+    const steps=jobs.flatMap(j=>j.steps||[]);
+    const completed=steps.filter(s=>s.status==='completed').length;
+    const running=steps.find(s=>s.status==='in_progress');
+    const pct=steps.length?Math.min(96,Math.round(completed/steps.length*95)):4;
+    status(`Ejecución #${id}\n${running?'Ahora: '+running.name:'Estado: '+run.status}\nEtapas: ${completed}/${steps.length} finalizadas`,pct);
+    if(run.status==='completed'){
+      stop();activeRun=null;
+      if(run.conclusion==='success'){
+        status('✓ Video terminado y verificado. Descargas disponibles.',100);
+        const container=$('downloadLinks');container.replaceChildren();
+        for(const name of FILES){
+          const a=document.createElement('a');a.className='download';
+          a.textContent='↓ '+name;
+          a.href=`https://github.com/${owner}/${repo}/releases/download/short-${id}/${name}`;
+          a.target='_blank';a.rel='noopener noreferrer';container.append(a);
+        }
+        $('downloads').classList.remove('hidden');
+      }else{
+        status('✕ Proceso detenido: '+run.conclusion+'. Revisa el registro de Actions.',100);
+        error('No hay MP4 aprobado. Los registros de GitHub explican el fallo.');
+      }
+    }
+  }catch(e){error('No se pudo consultar el estado: '+e.message+' (reintento automático)');}
+}
+$('generate').addEventListener('click',async()=>{
+  if(timer)clearInterval(timer);
+  error('');$('downloads').classList.add('hidden');
+  const topic=$('topic').value.trim(),owner=$('owner').value.trim(),repo=$('repo').value.trim();
+  if(!topic||!validName(owner)||!validName(repo)||!$('token').value.trim()){
+    return error('Completa tema, usuario, repositorio y token válido.');
+  }
+  for(const key of keys)localStorage.setItem('abyss_'+key,$(key).value.trim());
+  $('generate').disabled=true;$('progressPanel').classList.remove('hidden');
+  status('Enviando solicitud a GitHub Actions...',2);
+  try{
+    const data=await github(`/repos/${owner}/${repo}/actions/workflows/generate.yml/dispatches`,{
+      method:'POST',body:JSON.stringify({ref:'main',return_run_details:true,inputs:{topic}})
+    });
+    const id=data.workflow_run_id;
+    if(!id)throw new Error('GitHub no devolvió el ID del workflow (revisa la versión API).');
+    activeRun={owner,repo,id};
+    $('runLink').href=data.html_url||`https://github.com/${owner}/${repo}/actions/runs/${id}`;
+    await poll();
+    if(activeRun)timer=setInterval(poll,10000);
+  }catch(e){stop();status('Error al iniciar.',0);error(e.message);}
+});
+</script>
+</body></html>

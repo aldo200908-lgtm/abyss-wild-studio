@@ -1,0 +1,79 @@
+name: ABYSS WILD — Generador de Shorts
+run-name: Short · ${{ inputs.topic }} · #${{ github.run_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      topic:
+        description: Tema del Short
+        required: true
+        type: string
+        default: Titanoboa
+
+permissions:
+  contents: write
+
+concurrency:
+  group: abyss-video-budget
+  cancel-in-progress: false
+
+jobs:
+  short:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      TOPIC: ${{ inputs.topic }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+      GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-2.5-flash-lite' }}
+      MONTHLY_LIMIT_PEN: ${{ vars.MONTHLY_LIMIT_PEN || '20' }}
+      RUNNER_PRICE_USD_PER_MIN: ${{ vars.RUNNER_PRICE_USD_PER_MIN || '0.006' }}
+      USD_PEN: ${{ vars.USD_PEN || '3.50' }}
+      REPO_PRIVATE: ${{ github.event.repository.private }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: 1 · Obtener proyecto
+        uses: actions/checkout@v4
+      - name: 2 · Preparar Python y caché pip
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: 3 · Preparar Node y caché npm
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: 3b · Restaurar caché npm
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: npm-${{ runner.os }}-${{ hashFiles('render/package.json') }}
+      - name: 4 · Instalar dependencias
+        run: |
+          python -m pip install -r requirements.txt
+          cd render && npm install --no-audit --no-fund --prefer-offline
+          npx remotion browser ensure
+      - name: 5 · Presupuesto mensual
+        run: |
+          echo "PIPELINE_START_EPOCH=$(date +%s)" >> "$GITHUB_ENV"
+          python budget.py check
+      - name: 6 · Investigar y verificar guion
+        run: python pipeline.py research
+      - name: 7 · Sintetizar voz y seleccionar recursos
+        run: python pipeline.py assets
+      - name: 8 · Renderizar Remotion
+        run: cd render && npm run render
+      - name: 9 · Mezclar y normalizar FFmpeg
+        run: python pipeline.py master
+      - name: 10 · Validar y escribir créditos
+        run: python pipeline.py validate
+      - name: 11 · Actualizar contador de costes
+        run: python budget.py finalize
+      - name: 12 · Crear enlaces de descarga (Release)
+        run: |
+          gh release create "short-${GITHUB_RUN_ID}" \
+            dist/video.mp4 dist/guion.txt dist/fuentes.txt \
+            dist/creditos.txt dist/descripcion.txt dist/reporte.json \
+            --title "ABYSS WILD Short #${GITHUB_RUN_ID}" \
+            --notes-file work/release-notes.txt \
+            --latest=false

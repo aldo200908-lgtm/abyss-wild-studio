@@ -1,0 +1,17 @@
+{
+  "name": "abyss-wild-shorts",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "render": "node render.mjs"
+  },
+  "dependencies": {
+    "@fontsource/anton": "5.2.7",
+    "@remotion/bundler": "4.0.357",
+    "@remotion/renderer": "4.0.357",
+    "remotion": "4.0.357",
+    "react": "19.1.1",
+    "react-dom": "19.1.1"
+  }
+}

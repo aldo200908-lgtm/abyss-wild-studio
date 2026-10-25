@@ -1,0 +1,9 @@
+.env
+node_modules/
+__pycache__/
+*.pyc
+render/public/media/*
+!render/public/media/.gitkeep
+render/public/data.json
+work/
+dist/
