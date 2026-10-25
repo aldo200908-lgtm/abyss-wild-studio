@@ -33,6 +33,8 @@ from narration_budget import (predict_duration, remove_secondary_scene,
                               MAX_PREVIEW_SECONDS)
 from topic_guard import topic_problems
 from script_repair import apply_scene_repairs
+from viral_visuals import (shot_ranges, prepare_image, prepare_video,
+                           make_mascots, mascot_events, MIN_SHOT, MAX_SHOT)
 from topic_research import (topic_plan, gather_candidates, candidate_selection,
                             fetch_selected_articles, extract_sentences)
 
@@ -594,119 +596,138 @@ Ante incertidumbre, match false.'''
 
 
 def choose_assets(script):
+    """Every 3–4s beat MUST contain topic-relevant, licensed fullscreen B-roll.
+
+    No infographic placeholder and no silent missing image. A retry may reuse
+    a previously approved image for the SAME scene with a new Ken Burns move.
+    If no relevant media is found, fail instead of creating misleading content.
+    """
     MEDIA.mkdir(parents=True, exist_ok=True)
     gemini = Gemini()
-    used_ids, used_hashes = set(), set()
-    credits = []
-    updated = []
-    for idx, scene in enumerate(script['timeline']):
-        scene = dict(scene)
-        scene['asset'] = None
-        scene['visual_type'] = scene.get('visual_type', 'infographic')
-        visual = scene['visual_type'].lower()
-        if visual == 'infographic' or idx == len(script['timeline']) - 1:
-            updated.append(scene)
-            continue
-        q = str(scene.get('visual_query', '')).strip()[:90]
-        scene['visual_exclusions'] = script.get('visual_exclusions', [])
-        # Search for the narrated visual only; never force a particular animal.
-        if not q:
-            q = script['topic'][:90]
-        candidates = commons_candidates(q)
-        if visual in ('landscape', 'photo', 'object'):
-            candidates += pexels_candidates(q)
-        attempts = 0
-        for candidate in candidates:
-            if attempts >= 2:
-                break
-            if candidate['id'] in used_ids:
-                continue
-            attempts += 1
-            try:
-                preview_raw = fetch_bytes(candidate['preview'], max_mb=6)
-                preview = image_preview(preview_raw)
-                approval = approve_visual(gemini, scene, candidate, preview)
-                if not approval:
-                    continue
-                focus = approval.get('focal_point')
-                if (isinstance(focus, dict) and
-                        all(type(focus.get(k)) in (int, float) and
-                            math.isfinite(focus[k]) and 0 <= focus[k] <= 1
-                            for k in ('x', 'y'))):
-                    scene['focal_point'] = {
-                        'x': float(focus['x']), 'y': float(focus['y'])}
-                raw = preview_raw if candidate['type'] == 'image' else fetch_bytes(candidate['download'])
-                digest = hashlib.sha256(raw).hexdigest()
-                if digest in used_hashes:
-                    continue
-                if candidate['type'] == 'image':
-                    # Normalization removes unusual formats and EXIF orientation.
-                    from io import BytesIO
-                    im = Image.open(BytesIO(raw)).convert('RGB')
-                    im.thumbnail((1400, 1800))
-                    filename = f'{idx:02d}.jpg'
-                    im.save(MEDIA / filename, 'JPEG', quality=87)
-                    media_width, media_height = im.size
-                else:
-                    filename = f'{idx:02d}.mp4'
-                    (MEDIA / filename).write_bytes(raw)
-                    if duration(MEDIA / filename) < 3:
-                        (MEDIA / filename).unlink()
-                        continue
-                    stream = next((x for x in ffprobe(MEDIA / filename)['streams']
-                                   if x.get('codec_type') == 'video'), {})
-                    media_width, media_height = (int(stream.get('width', 0)),
-                                                 int(stream.get('height', 0)))
-                if media_width < 1 or media_height < 1:
-                    raise ValueError('Dimensiones visuales desconocidas')
-                scene['asset'] = {'file': filename, 'type': candidate['type'],
-                                  'id': candidate['id'], 'width': media_width,
-                                  'height': media_height}
-                scene['label'] = ('ILUSTRACIÓN' if visual == 'reconstruction' else
-                                  'ARCHIVO DE APOYO' if visual == 'landscape' else 'FÓSIL / DOCUMENTO')
-                used_ids.add(candidate['id'])
-                used_hashes.add(digest)
-                credits.append({**candidate, 'scene': idx + 1, 'sha256': digest})
-                break
-            except (OSError, ValueError, requests.RequestException, subprocess.CalledProcessError) as exc:
-                log(f'Medio escena {idx+1}, intento {attempts}: {exc}')
-        if not scene['asset']:
-            # Rewrite visual as original typographic infographic, without misleading stock.
-            scene['visual_type'] = 'infographic'
-            scene['label'] = 'GRÁFICO ORIGINAL · DATO VERIFICADO'
-        updated.append(scene)
-    script['timeline'] = updated
-    script['credits'] = credits
-    # Every visual must change within 3s. Split a slow scene into new,
-    # distinct typographic cards; never reuse an image on the next card.
+    credits, used_ids, used_hashes = [], set(), set()
+    scene_media = {}
     beats = []
-    for scene in updated:
-        n = max(1, math.ceil((scene['end'] - scene['start']) / 2.85))
-        for piece in range(n):
-            beat = dict(scene)
-            beat['start'] = round(scene['start'] + piece * (scene['end'] - scene['start']) / n, 3)
-            beat['end'] = round(scene['start'] + (piece + 1) * (scene['end'] - scene['start']) / n, 3)
-            beat['beat'] = len(beats)
-            if piece > 0:
-                beat['asset'] = None
-                beat['visual_type'] = 'infographic'
-                beat['label'] = 'DATO VERIFICADO'
-            beats.append(beat)
-    apply_motion_plans(beats, script['topic'], MEDIA)
-    pan_count = validate_motion(beats)
-    caption_layout = {'y': CAPTION_Y, 'max_width': CAPTION_SAFE_WIDTH,
-                      'max_text_px': MAX_CAPTION_TEXT_PX}
-    caption_count = validate_captions(script['captions'], caption_layout)
-    log(f'Cámara: {pan_count} paneos alternados; '
-        f'{caption_count} subtítulos de una palabra.')
-    export = {'topic': script['topic'],
-              'title': script.get('title', script['topic']),
-              'duration': script['duration'], 'fps': FPS, 'beats': beats,
-              'captions': script['captions'], 'caption_layout': caption_layout}
+    ranges = shot_ranges(script['duration'])
+    for idx, (start, end) in enumerate(ranges):
+        midpoint = (start + end) / 2
+        index = next((i for i, sc in enumerate(script['timeline'])
+                      if sc['start'] <= midpoint < sc['end']),
+                     len(script['timeline']) - 1)
+        scene = dict(script['timeline'][index])
+        asset = scene_media.get(index)
+        if asset is None:
+            visual = str(scene.get('visual_type', 'photo')).lower()
+            q = str(scene.get('visual_query') or script['topic']).strip()[:90]
+            topic = script['topic'].strip()[:90]
+            keywords = list(dict.fromkeys([q, topic + ' fossil reconstruction', topic]))
+            # Stock video only for actual contexts, not fabricated fossils.
+            candidates = []
+            for term in keywords:
+                candidates.extend(commons_candidates(term))
+                if visual in ('landscape', 'photo', 'object', 'infographic'):
+                    candidates.extend(pexels_candidates(term))
+            tried = set()
+            for candidate in candidates:
+                if candidate['id'] in tried:
+                    continue
+                tried.add(candidate['id'])
+                if len(tried) > 15:
+                    break
+                try:
+                    raw_preview = fetch_bytes(candidate['preview'], max_mb=6)
+                    preview = image_preview(raw_preview)
+                    # Judge THIS scene's factual appropriateness, even if media
+                    # had previously been used for another scene.
+                    assessment = approve_visual(gemini, scene, candidate, preview)
+                    if not assessment:
+                        continue
+                    raw = (raw_preview if candidate['type'] == 'image'
+                           else fetch_bytes(candidate['download']))
+                    digest = hashlib.sha256(raw).hexdigest()
+                    extension = 'jpg' if candidate['type'] == 'image' else 'mp4'
+                    original = MEDIA / ('source_' + digest[:18] + '.' + extension)
+                    if not original.exists():
+                        if candidate['type'] == 'image':
+                            from io import BytesIO
+                            from PIL import ImageOps
+                            pic = ImageOps.exif_transpose(
+                                Image.open(BytesIO(raw))).convert('RGB')
+                            if min(pic.size) < 300:
+                                continue
+                            pic.thumbnail((1800, 2500))
+                            pic.save(original, 'JPEG', quality=90)
+                        else:
+                            original.write_bytes(raw)
+                            if duration(original) < 3:
+                                original.unlink(missing_ok=True)
+                                continue
+                    if candidate['type'] == 'image':
+                        from viral_visuals import image_ok
+                        if not image_ok(original):
+                            original.unlink(missing_ok=True)
+                            continue
+                    asset = {'file': original.name, 'type': candidate['type'],
+                             'id': candidate['id']}
+                    scene_media[index] = asset
+                    if digest not in used_hashes:
+                        used_hashes.add(digest)
+                        used_ids.add(candidate['id'])
+                        credits.append({**candidate, 'scene': index + 1,
+                                        'sha256': digest})
+                    break
+                except (OSError, ValueError, RuntimeError,
+                        requests.RequestException,
+                        subprocess.CalledProcessError) as exc:
+                    log(f'B-roll escena {index+1}, candidato {len(tried)}: {exc}')
+            if asset is None:
+                raise RuntimeError(
+                    f'Sin B-roll pertinente/licenciado para escena {index+1}: '
+                    f'{scene["line"][:90]}. No se generan pantallas vacías.')
+        shot_name = f'shot_{idx:02d}.mp4'
+        target = MEDIA / shot_name
+        source = MEDIA / asset['file']
+        if asset['type'] == 'image':
+            prepare_image(source, target, end-start, idx)
+        else:
+            prepare_video(source, target, end-start, idx)
+        beats.append({'beat': idx, 'start': start, 'end': end,
+                      'scene_index': index, 'asset': {'file': shot_name,
+                      'type': 'video', 'width': 1080, 'height': 1920},
+                      'source_id': asset['id']})
+    make_mascots(MEDIA)
+    validate_broll(beats, script['duration'])
+    layout = {'y': CAPTION_Y, 'max_width': CAPTION_SAFE_WIDTH,
+              'max_text_px': MAX_CAPTION_TEXT_PX}
+    caption_count = validate_captions(script['captions'], layout)
+    script['credits'] = credits
+    script['broll_beats'] = len(beats)
+    export = {'topic': script['topic'], 'duration': script['duration'], 'fps': FPS,
+              'beats': beats, 'captions': script['captions'],
+              'caption_layout': layout, 'mascots': mascot_events(script['duration'])}
     save_json(PUBLIC / 'data.json', export)
     save_json(WORK / 'script.json', script)
-    log(f'Visuales: {len(credits)} medios acreditados y {len(beats)} cambios de escena')
+    log(f'Visuales: {len(beats)} planos B-roll completos, '
+        f'{len(credits)} medios originales acreditados y '
+        f'{caption_count} subtítulos de una palabra')
 
+
+def validate_broll(beats, duration):
+    if not beats:
+        raise ValueError('Video sin planos B-roll')
+    if abs(beats[0]['start']) > .001 or abs(beats[-1]['end'] - duration) > .02:
+        raise ValueError('B-roll no cubre el inicio/final del video')
+    for i, beat in enumerate(beats):
+        if not beat.get('asset') or beat['asset'].get('type') != 'video':
+            raise ValueError(f'B-roll vacío en segmento {i}')
+        p = MEDIA / beat['asset']['file']
+        if not p.is_file() or p.stat().st_size < 10000:
+            raise ValueError(f'Faltan imágenes del segmento {i}')
+        if i and abs(beats[i-1]['end'] - beat['start']) > .005:
+            raise ValueError(f'Hueco visual antes de {i}')
+        seconds = beat['end'] - beat['start']
+        if not MIN_SHOT - .02 <= seconds <= MAX_SHOT + .02:
+            raise ValueError(f'Plano {i} fuera de 3–4 segundos')
+    return len(beats)
 
 def audio_files():
     script = load_json(WORK / 'script.json')
@@ -836,7 +857,7 @@ def validate():
     assert len({c['id'] for c in script['credits']}) == len(script['credits']), 'Medio repetido'
     assert all(0 <= s['start'] < s['end'] <= d + .1 for s in data['beats']), 'Beat fuera de rango'
     assert max(s['end'] - s['start'] for s in data['beats']) <= 2.86, 'Corte >2.85s'
-    validate_motion(data['beats'])
+    validate_broll(data['beats'], script['duration'])
     validate_captions(data['captions'], data['caption_layout'])
     # Geometric bounds are checked using the same camera math as Remotion.
     # This does not replace an optical assessment of individual frames.
