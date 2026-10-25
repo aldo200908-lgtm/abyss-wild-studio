@@ -37,6 +37,7 @@ from audio_design import make_soundtracks
 from word_alignment import sync_words
 from viral_visuals import (shot_ranges, prepare_image, prepare_video,
                            make_mascots, mascot_events, MIN_SHOT, MAX_SHOT)
+from broll_search import search_terms, reorder_fallback_assets, allowed_illustrative_reuse
 from topic_research import (topic_plan, gather_candidates, candidate_selection,
                             fetch_selected_articles, extract_sentences)
 
@@ -585,20 +586,31 @@ def image_preview(data):
 
 
 def approve_visual(gemini, scene, candidate, preview):
-    prompt = f'''Audita esta imagen fotograma para una escena de divulgación.
-Narración: {scene['line']}
-Elemento visual solicitado: {scene.get('visual_query', '')}
-Tipo esperado: {scene.get('visual_type', 'infographic')}
-Tema general: {os.getenv('TOPIC', 'Titanoboa')}
-Rechaza imágenes del sujeto equivocado, versiones genéricas engañosas, y estos elementos en particular: {', '.join(scene.get('visual_exclusions', [])) or 'representaciones no verificables'}.
-Si es documental fósil, no confundir reconstrucción con fósil auténtico. Si es paisaje de apoyo, acepta solo si la frase describe el ambiente (no el animal desaparecido). Para fotografía aprobada identifica coordenadas normalizadas del sujeto,
-focal_point.x y focal_point.y entre cero y uno. Si no puedes
-identificarlo, devuelve focal_point null; se usará saliencia.
-Respuesta JSON: {{"match":true/false,"focal_point":{{"x":0.5,"y":0.5}}}}.
-Ante incertidumbre, match false.'''
-    answer = gemini.generate(prompt, photo=preview, temperature=0)
-    return answer if isinstance(answer, dict) and answer.get('match') is True else None
+    """Audit factual suitability; allow honest illustrative subject B-roll."""
+    prompt = f'''Evalúa esta imagen/miniatura para B-roll de un Short documental.
+Tema: {os.getenv('TOPIC', 'Titanoboa')}
+Narración de esta escena: {scene['line']}
+Consulta visual: {scene.get('visual_query', '')}
+Medio identificado: {candidate.get('title', '')}
+Excluye animales o fósiles de otra especie representados como el sujeto, fotos
+de animales vivos falsamente presentadas como el animal extinto, anacronismos
+y material ajeno. Excluye: {', '.join(scene.get('visual_exclusions', [])) or 'ninguno'}.
 
+ACEPTA también un plano ilustrativo documental de EL MISMO SUJETO
+(modelo museístico, réplica, fósil, reconstrucción científicamente
+identificada) para acompañar frases sobre la edad geológica, época,
+tamaño o descubrimiento. Una imagen del sujeto NO tiene que
+demostrar literalmente cada número o fecha narrada.
+Un paisaje moderno solo es aceptable cuando la escena describe
+el paisaje o se identifica claramente como imagen AMBIENTAL ilustrativa.
+Las recreaciones jamás constituyen grabaciones reales del pasado.
+Si la conexión temática es falsa o engañosa, rechaza el medio.
+
+Devuelve exclusivamente JSON:
+{{"match":true/false,"focal_point":{{"x":0.5,"y":0.5}}}}
+Si no hay conexión temática fiable, match=false.'''
+    answer = gemini.generate(prompt, photo=preview, temperature=0)
+    return answer if allowed_illustrative_reuse(answer) else None
 
 def choose_assets(script):
     """Every 3–4s beat MUST contain topic-relevant, licensed fullscreen B-roll.
