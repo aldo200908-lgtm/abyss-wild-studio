@@ -70,6 +70,6 @@ def apply_scene_repairs(scenes, proposal, rejected, known_ids):
     if seen != allowed:
         return None
     count = sum(len(line_words(scene.get('line', ''))) for scene in revised)
-    if not 78 <= count <= 112:
+    if not 62 <= count <= 112:
         return None
     return revised
