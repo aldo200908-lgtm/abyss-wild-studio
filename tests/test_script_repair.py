@@ -16,7 +16,7 @@ def sample_scenes():
     scenes += [
         {'line': 'Aquella especie habitó regiones cálidas hace mucho tiempo.',
          'fact_ids': ['F1'], 'visual_type': 'infographic'}
-        for _ in range(11)
+        for _ in range(8)
     ]
     scenes.append({'line': '¿Te imaginas ver una Titanoboa en persona?',
                    'fact_ids': [], 'visual_type': 'infographic'})
