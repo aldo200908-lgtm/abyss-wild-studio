@@ -25,6 +25,6 @@ jobs:
       - name: Install Python packages
         run: python -m pip install -r requirements.txt
       - name: Verify Python syntax
-        run: python -m compileall -q pipeline.py topic_research.py topic_guard.py response_shapes.py offline_voice.py tests
+        run: python -m compileall -q pipeline.py topic_research.py topic_guard.py response_shapes.py offline_voice.py native_spanish_voice.py spanish_voice_text.py voice_bank.py tests
       - name: Unit tests
         run: python -m unittest discover -s tests -p 'test_*.py' -v
