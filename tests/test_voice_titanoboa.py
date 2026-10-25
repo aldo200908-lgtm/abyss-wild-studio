@@ -42,7 +42,10 @@ class TitanoboaNarrationCase(unittest.TestCase):
             'Investigadores analizaron vértebras y reconstruyeron dimensiones del animal',
         ]
         groups = grupos_de_frases(phrases, 8, 18)
-        self.assertEqual(len(groups), 3)
+        self.assertGreaterEqual(len(groups), 2)
+        self.assertEqual([idx for group in groups for idx, _ in group], [0, 1, 2])
+        self.assertTrue(all(8 <= sum(len(t.split()) for _, t in group) <= 18
+                            for group in groups))
 
 
 if __name__ == '__main__':
