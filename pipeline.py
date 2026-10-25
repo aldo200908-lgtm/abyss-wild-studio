@@ -613,99 +613,193 @@ Si no hay conexión temática fiable, match=false.'''
     return answer if allowed_illustrative_reuse(answer) else None
 
 def choose_assets(script):
-    """Every 3–4s beat MUST contain topic-relevant, licensed fullscreen B-roll.
+    """Build 3–4s full-bleed B-roll with factual, reusable source footage.
 
-    No infographic placeholder and no silent missing image. A retry may reuse
-    a previously approved image for the SAME scene with a new Ken Burns move.
-    If no relevant media is found, fail instead of creating misleading content.
+    Retry search in multiple languages and historical contexts. When a scene
+    cannot acquire its own visual, re-audit an already approved topic image as
+    an illustrative cutaway (never silently misrepresent another species).
+    If no scene-safe media exists, fail closed rather than make a text slide.
     """
     MEDIA.mkdir(parents=True, exist_ok=True)
     gemini = Gemini()
-    credits, used_ids, used_hashes = [], set(), set()
-    scene_media = {}
+    credits, seen_hashes = [], {}
+    approved = []
+    scene_media, search_cache, preview_cache, audit_cache = {}, {}, {}, {}
     beats = []
     ranges = shot_ranges(script['duration'])
+    queries_tried = 0
+    reused = 0
+
+    def search(term, allow_stock):
+        nonlocal queries_tried
+        key = ('commons', term.casefold())
+        if key not in search_cache:
+            try:
+                search_cache[key] = commons_candidates(term)
+            except (requests.RequestException, ValueError) as error:
+                log(f'Commons búsqueda {term[:40]}: {error}')
+                search_cache[key] = []
+            queries_tried += 1
+        result = list(search_cache[key])
+        if allow_stock:
+            pkey = ('pexels', term.casefold())
+            if pkey not in search_cache:
+                try:
+                    search_cache[pkey] = pexels_candidates(term)
+                except (requests.RequestException, ValueError) as error:
+                    log(f'Pexels búsqueda {term[:40]}: {error}')
+                    search_cache[pkey] = []
+                queries_tried += 1
+            result += search_cache[pkey]
+        return result
+
+    def preview_of(candidate):
+        key = candidate['id']
+        if key not in preview_cache:
+            raw_preview = fetch_bytes(candidate['preview'], max_mb=6)
+            preview_cache[key] = (raw_preview, image_preview(raw_preview))
+        return preview_cache[key]
+
+    def audit(scene_number, scene, candidate, preview):
+        key = (scene_number, candidate['id'])
+        if key not in audit_cache:
+            try:
+                audit_cache[key] = approve_visual(gemini, scene, candidate, preview)
+            except (RuntimeError, ValueError, requests.RequestException) as err:
+                # A temporary Gemini service error is NOT permission to use an
+                # unaudited image. Other candidates or prior images are tried.
+                log(f'Auditor visual, escena {scene_number+1}: {err}')
+                audit_cache[key] = None
+        return audit_cache[key]
+
+    def credited(candidate, scene_index, digest):
+        if digest in seen_hashes:
+            existing = credits[seen_hashes[digest]]
+            used = existing.setdefault('scenes_used', [existing['scene']])
+            if scene_index+1 not in used:
+                used.append(scene_index+1)
+        else:
+            seen_hashes[digest] = len(credits)
+            credits.append({**candidate, 'scene': scene_index+1,
+                            'scenes_used': [scene_index+1], 'sha256': digest})
+
+    def materialize(candidate, original_preview, scene_index, assessment):
+        data = (original_preview if candidate['type'] == 'image'
+                else fetch_bytes(candidate['download']))
+        digest = hashlib.sha256(data).hexdigest()
+        extension = 'jpg' if candidate['type'] == 'image' else 'mp4'
+        original = MEDIA / ('source_' + digest[:18] + '.' + extension)
+        if not original.exists():
+            if candidate['type'] == 'image':
+                from io import BytesIO
+                from PIL import ImageOps
+                pic = ImageOps.exif_transpose(
+                    Image.open(BytesIO(data))).convert('RGB')
+                if min(pic.size) < 300:
+                    raise ValueError('Imagen demasiado pequeña')
+                pic.thumbnail((1800, 2500))
+                pic.save(original, 'JPEG', quality=90)
+            else:
+                original.write_bytes(data)
+                if duration(original) < 3:
+                    original.unlink(missing_ok=True)
+                    raise ValueError('Clip de menos de tres segundos')
+        if candidate['type'] == 'image':
+            from viral_visuals import image_ok
+            if not image_ok(original):
+                original.unlink(missing_ok=True)
+                raise ValueError('Imagen plana o corrupta')
+        focus = assessment.get('focal_point')
+        asset = {'file': original.name, 'type': candidate['type'],
+                 'id': candidate['id'], 'digest': digest}
+        if isinstance(focus, dict) and all(
+                isinstance(focus.get(k), (int, float)) and
+                math.isfinite(focus[k]) and 0 <= focus[k] <= 1
+                for k in ('x', 'y')):
+            asset['focal_point'] = focus
+        credited(candidate, scene_index, digest)
+        return asset
+
     for idx, (start, end) in enumerate(ranges):
-        midpoint = (start + end) / 2
+        midpoint = (start + end)/2
         index = next((i for i, sc in enumerate(script['timeline'])
                       if sc['start'] <= midpoint < sc['end']),
-                     len(script['timeline']) - 1)
+                     len(script['timeline'])-1)
         scene = dict(script['timeline'][index])
         asset = scene_media.get(index)
+        reused_this_shot = False
         if asset is None:
             visual = str(scene.get('visual_type', 'photo')).lower()
-            q = str(scene.get('visual_query') or script['topic']).strip()[:90]
-            topic = script['topic'].strip()[:90]
-            keywords = list(dict.fromkeys([q, topic + ' fossil reconstruction', topic]))
-            # Stock video only for actual contexts, not fabricated fossils.
+            terms = search_terms(script['topic'], scene)
+            # Searching 5 targeted terms gives several categories without
+            # burning minutes on dozens of low-relevance Gemini audits.
             candidates = []
-            for term in keywords:
-                candidates.extend(commons_candidates(term))
-                if visual in ('landscape', 'photo', 'object', 'infographic'):
-                    candidates.extend(pexels_candidates(term))
-            tried = set()
+            for term in terms[:6]:
+                # Pexels landscapes are allowed only for scenes describing
+                # the setting, not as false archival footage of extinct life.
+                stock = (visual in ('landscape', 'photo', 'object',
+                                    'environment'))
+                candidates.extend(search(term, allow_stock=stock))
+            distinct = {}
             for candidate in candidates:
-                if candidate['id'] in tried:
-                    continue
-                tried.add(candidate['id'])
-                if len(tried) > 15:
+                distinct.setdefault(candidate['id'], candidate)
+            inspected = 0
+            for candidate in distinct.values():
+                if inspected >= 12:
                     break
+                inspected += 1
                 try:
-                    raw_preview = fetch_bytes(candidate['preview'], max_mb=6)
-                    preview = image_preview(raw_preview)
-                    # Judge THIS scene's factual appropriateness, even if media
-                    # had previously been used for another scene.
-                    assessment = approve_visual(gemini, scene, candidate, preview)
-                    if not assessment:
+                    raw, preview = preview_of(candidate)
+                    assessment = audit(index, scene, candidate, preview)
+                    if assessment is None:
                         continue
-                    raw = (raw_preview if candidate['type'] == 'image'
-                           else fetch_bytes(candidate['download']))
-                    digest = hashlib.sha256(raw).hexdigest()
-                    extension = 'jpg' if candidate['type'] == 'image' else 'mp4'
-                    original = MEDIA / ('source_' + digest[:18] + '.' + extension)
-                    if not original.exists():
-                        if candidate['type'] == 'image':
-                            from io import BytesIO
-                            from PIL import ImageOps
-                            pic = ImageOps.exif_transpose(
-                                Image.open(BytesIO(raw))).convert('RGB')
-                            if min(pic.size) < 300:
-                                continue
-                            pic.thumbnail((1800, 2500))
-                            pic.save(original, 'JPEG', quality=90)
-                        else:
-                            original.write_bytes(raw)
-                            if duration(original) < 3:
-                                original.unlink(missing_ok=True)
-                                continue
-                    if candidate['type'] == 'image':
-                        from viral_visuals import image_ok
-                        if not image_ok(original):
-                            original.unlink(missing_ok=True)
-                            continue
-                    asset = {'file': original.name, 'type': candidate['type'],
-                             'id': candidate['id']}
-                    focus = assessment.get('focal_point')
-                    if isinstance(focus, dict) and all(
-                            isinstance(focus.get(k), (int,float)) and
-                            math.isfinite(focus[k]) and 0 <= focus[k] <= 1
-                            for k in ('x','y')):
-                        asset['focal_point'] = focus
+                    asset = materialize(candidate, raw, index, assessment)
+                    approved.append({'scene_index': index,
+                                     'candidate': candidate,
+                                     'asset': asset,
+                                     'raw_preview': raw,
+                                     'preview': preview})
                     scene_media[index] = asset
-                    if digest not in used_hashes:
-                        used_hashes.add(digest)
-                        used_ids.add(candidate['id'])
-                        credits.append({**candidate, 'scene': index + 1,
-                                        'sha256': digest})
+                    log(f'B-roll escena {index+1}: aprobado {candidate["id"][:80]}')
                     break
                 except (OSError, ValueError, RuntimeError,
-                        requests.RequestException,
-                        subprocess.CalledProcessError) as exc:
-                    log(f'B-roll escena {index+1}, candidato {len(tried)}: {exc}')
+                        requests.RequestException, subprocess.CalledProcessError) as exc:
+                    log(f'B-roll escena {index+1}, candidato {inspected}: {exc}')
+
+            if asset is None:
+                # A museum reconstruction or identified fossil of the same
+                # topic is valid context for narration about its age/size.
+                # Re-use only with a NEW approval specific to this scene.
+                for prior in reorder_fallback_assets(approved, index)[:6]:
+                    try:
+                        candidate = prior['candidate']
+                        assessment = audit(index, scene, candidate,
+                                           prior['preview'])
+                        if not allowed_illustrative_reuse(assessment):
+                            continue
+                        asset = dict(prior['asset'])
+                        focus = assessment.get('focal_point')
+                        if isinstance(focus, dict) and all(
+                                isinstance(focus.get(k), (int, float)) and
+                                0 <= focus[k] <= 1 for k in ('x', 'y')):
+                            asset['focal_point'] = focus
+                        scene_media[index] = asset
+                        credited(candidate, index, asset['digest'])
+                        reused_this_shot = True
+                        reused += 1
+                        log(f'B-roll escena {index+1}: reutilización documental '
+                            f'auditada de escena {prior["scene_index"]+1}: '
+                            f'{candidate["id"][:70]}')
+                        break
+                    except (OSError, ValueError, RuntimeError,
+                            requests.RequestException) as exc:
+                        log(f'Reutilización escena {index+1}: {exc}')
             if asset is None:
                 raise RuntimeError(
-                    f'Sin B-roll pertinente/licenciado para escena {index+1}: '
-                    f'{scene["line"][:90]}. No se generan pantallas vacías.')
+                    f'Sin B-roll adecuado tras {inspected} candidatos nuevos '
+                    f'y {min(6,len(approved))} recursos anteriores '
+                    f'para escena {index+1}: {scene["line"][:90]}. '
+                    'No se publicarán fondos vacíos ni imágenes engañosas.')
         shot_name = f'shot_{idx:02d}.mp4'
         target = MEDIA / shot_name
         source = MEDIA / asset['file']
@@ -715,24 +809,29 @@ def choose_assets(script):
         else:
             prepare_video(source, target, end-start, idx)
         beats.append({'beat': idx, 'start': start, 'end': end,
-                      'scene_index': index, 'asset': {'file': shot_name,
-                      'type': 'video', 'width': 1080, 'height': 1920},
+                      'scene_index': index,
+                      'contextual_reuse': reused_this_shot,
+                      'asset': {'file': shot_name, 'type': 'video',
+                                'width': 1080, 'height': 1920},
                       'source_id': asset['id']})
+
     make_mascots(MEDIA)
     validate_broll(beats, script['duration'])
     layout = {'y': CAPTION_Y, 'max_width': CAPTION_SAFE_WIDTH,
               'max_text_px': MAX_CAPTION_TEXT_PX}
-    caption_count = validate_captions(script['captions'], layout)
+    count = validate_captions(script['captions'], layout)
     script['credits'] = credits
     script['broll_beats'] = len(beats)
+    script['broll_reused_scenes'] = reused
+    script['broll_unique_sources'] = len(credits)
     export = {'topic': script['topic'], 'duration': script['duration'], 'fps': FPS,
               'beats': beats, 'captions': script['captions'],
               'caption_layout': layout, 'mascots': mascot_events(script['duration'])}
     save_json(PUBLIC / 'data.json', export)
     save_json(WORK / 'script.json', script)
-    log(f'Visuales: {len(beats)} planos B-roll completos, '
-        f'{len(credits)} medios originales acreditados y '
-        f'{caption_count} subtítulos de una palabra')
+    log(f'Visuales: {len(beats)} planos completos, {len(credits)} fuentes '
+        f'acreditadas, {reused} reutilizaciones auditadas, '
+        f'{queries_tried} consultas, {count} subtítulos de una palabra')
 
 
 def validate_broll(beats, duration):
