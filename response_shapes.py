@@ -45,7 +45,7 @@ def normalize_script_payload(payload, topic):
         clean['line'] = line.strip()
         clean['fact_ids'] = facts
         if not isinstance(clean.get('visual_type'), str) or clean.get('visual_type') not in (
-                'fossil', 'landscape', 'reconstruction', 'infographic'):
+                'photo', 'object', 'fossil', 'landscape', 'reconstruction', 'diagram', 'infographic'):
             clean['visual_type'] = 'infographic'
         if not isinstance(clean.get('visual_query'), str):
             clean['visual_query'] = ''
