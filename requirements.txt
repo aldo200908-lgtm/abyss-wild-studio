@@ -1,4 +1,7 @@
 requests==2.32.3
 Pillow==11.3.0
 numpy==2.3.3
+num2words>=0.5.14,<1
+azure-cognitiveservices-speech>=1.43,<2
+faster-whisper>=1.1,<2
 piper-tts==1.8.0
