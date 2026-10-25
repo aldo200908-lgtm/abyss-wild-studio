@@ -673,6 +673,12 @@ def choose_assets(script):
                             continue
                     asset = {'file': original.name, 'type': candidate['type'],
                              'id': candidate['id']}
+                    focus = assessment.get('focal_point')
+                    if isinstance(focus, dict) and all(
+                            isinstance(focus.get(k), (int,float)) and
+                            math.isfinite(focus[k]) and 0 <= focus[k] <= 1
+                            for k in ('x','y')):
+                        asset['focal_point'] = focus
                     scene_media[index] = asset
                     if digest not in used_hashes:
                         used_hashes.add(digest)
@@ -692,7 +698,8 @@ def choose_assets(script):
         target = MEDIA / shot_name
         source = MEDIA / asset['file']
         if asset['type'] == 'image':
-            prepare_image(source, target, end-start, idx)
+            prepare_image(source, target, end-start, idx,
+                          asset.get('focal_point'))
         else:
             prepare_video(source, target, end-start, idx)
         beats.append({'beat': idx, 'start': start, 'end': end,
