@@ -745,7 +745,7 @@ def write_wav(path, signal, sample_rate):
         f.writeframes((signal * 32767).astype('<i2').tobytes())
 
 
-def master_graph(ceiling=0.62):
+def master_graph(ceiling=0.62, gain_db=0.0):
     """AAC may overshoot the loudnorm true peak; enforce a final PCM limiter.
 
     Do not relax the -1.5 dBTP check. The limiter is after loudnorm, with
@@ -753,11 +753,14 @@ def master_graph(ceiling=0.62):
     """
     if not 0.25 <= ceiling <= 0.8:
         raise ValueError('Techo del limitador fuera del rango seguro')
+    if not -3 <= gain_db <= 4:
+        raise ValueError('Ajuste de ganancia fuera de rango')
     return ('[1:a]aresample=44100,asplit=2[voicemix][voiceside];'
             '[2:a]volume=-25dB[bed];'
             '[bed][voiceside]sidechaincompress=threshold=0.02:ratio=8:attack=15:release=280[duck];'
             '[duck][voicemix][3:a]amix=inputs=3:duration=longest:normalize=0,'
             'loudnorm=I=-14:TP=-1.9:LRA=11,'
+            f'volume={gain_db:+.2f}dB,'
             f'alimiter=limit={ceiling:.3f}:attack=5:release=80:level=0[aout]')
 
 
@@ -765,29 +768,32 @@ def master():
     audio_files()
     DIST.mkdir(exist_ok=True)
     video = DIST / 'video.mp4'
-    # The second pass is only used if the AAC decode violates the peak limit.
-    # Both attempts remaster ORIGINAL input tracks (no generation loss).
-    for attempt, ceiling in enumerate((0.62, 0.48), start=1):
+    # Measure the actual AAC file, then correct loudness and peak together.
+    # Each pass uses ORIGINAL audio tracks; never re-encode the previous AAC.
+    ceiling, gain_db = 0.62, 0.0
+    for attempt in range(1, 5):
         subprocess.run(['ffmpeg', '-hide_banner', '-y', '-i', str(WORK / 'silent.mp4'),
                         '-i', str(WORK / 'voice.mp3'), '-i', str(WORK / 'music.wav'),
                         '-i', str(WORK / 'effects.wav'), '-filter_complex',
-                        master_graph(ceiling),
+                        master_graph(ceiling, gain_db),
                         '-map', '0:v:0', '-map', '[aout]', '-c:v', 'copy', '-c:a', 'aac',
                         '-b:a', '192k', '-ar', '44100', '-shortest',
                         '-movflags', '+faststart', str(video)], check=True)
         peak = measured_true_peak(video)
         lufs = measured_lufs(video)
         log(f'Mezcla AAC #{attempt}: {lufs:.2f} LUFS; '
-            f'true peak decodificado {peak:.2f} dBTP '
-            f'(limitador {ceiling:.2f})')
+            f'true peak {peak:.2f} dBTP; '
+            f'ganancia {gain_db:+.2f} dB; limitador {ceiling:.2f}')
         if peak <= -1.5 and -16 <= lufs <= -12:
             return
-        if lufs < -16 or lufs > -12:
-            raise RuntimeError(f'Volumen final {lufs:.2f} LUFS fuera de '
-                               '-16 a -12; no se publicará audio defectuoso')
-    raise RuntimeError(f'El AAC sigue excediendo -1.5 dBTP '
-                       f'(medición {peak:.2f} dBTP) tras dos mezclas')
-
+        if lufs < -16:
+            gain_db = min(4.0, gain_db + min(2.0, -14.5 - lufs))
+        elif lufs > -12:
+            gain_db = max(-3.0, gain_db - min(2.0, lufs + 14.0))
+        if peak > -1.5:
+            ceiling = max(0.25, ceiling * 10 ** ((-2.5 - peak) / 20))
+    raise RuntimeError(f'No se alcanzó volumen y true peak seguros '
+                       f'tras cuatro mezclas: {lufs:.2f} LUFS, {peak:.2f} dBTP')
 
 def measured_true_peak(path):
     """Match the actual decoded AAC 4x resampling used by final validation."""
