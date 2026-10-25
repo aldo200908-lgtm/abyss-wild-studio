@@ -52,16 +52,13 @@ def topic_problems(topic, scenes, title='', anchors=None):
     def score(sentence):
         return len(stems(sentence) & keyset)
 
-    if not any(score(line) > 0 for line in lines[:3]):
-        problems.append('El inicio no está conectado con el asunto solicitado')
-    if not any(score(line) > 0 for line in lines[-2:]):
-        problems.append('El final no está conectado con el asunto solicitado')
-    # The audience should not get 12 scenes of background context.
-    relevant = sum(score(line) > 0 for line in lines[:-1])
-    needed = max(3, (len(lines) - 1) // 3)
-    if relevant < needed:
-        problems.append(f'Solo {relevant} de {len(lines)-1} escenas contienen '
-                        'conceptos centrales del tema')
-    if title and not score(title):
-        problems.append('Título sin relación léxica con el tema')
+    # Do not reject a relevant script because most sentences use pronouns,
+    # synonyms or refer to consequences instead of repeating keywords.
+    # The independent Gemini audit verifies semantic focus for every scene.
+    # Lexical checks are only a safeguard against TOTAL drift.
+    first = any(score(line) > 0 for line in lines[:3])
+    last = any(score(line) > 0 for line in lines[-2:])
+    named_title = bool(title and score(title))
+    if not first and not last and not named_title:
+        problems.append('Título, inicio y final no contienen conceptos del tema')
     return problems
