@@ -51,6 +51,7 @@ class CameraMotionTests(unittest.TestCase):
         self.assertEqual(validate_motion(beats), 8)
         bad = beats[0]['camera']
         bad['from_x'] += 400
+        bad['to_x'] += 400
         with self.assertRaisesRegex(ValueError, 'borde horizontal vacío'):
             validate_motion(beats)
 
