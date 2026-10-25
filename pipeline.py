@@ -675,7 +675,7 @@ def master():
              '[2:a]volume=-25dB[bed];'
              '[bed][voiceside]sidechaincompress=threshold=0.02:ratio=8:attack=15:release=280[duck];'
              '[duck][voicemix][3:a]amix=inputs=3:duration=longest:normalize=0,'
-             'loudnorm=I=-14:TP=-1.5:LRA=11:print_format=json[aout]')
+             'loudnorm=I=-14:TP=-1.9:LRA=11:print_format=json[aout]')
     subprocess.run(['ffmpeg', '-hide_banner', '-y', '-i', str(WORK / 'silent.mp4'),
                     '-i', str(WORK / 'voice.mp3'), '-i', str(WORK / 'music.wav'),
                     '-i', str(WORK / 'effects.wav'), '-filter_complex', graph,
