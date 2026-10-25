@@ -1027,7 +1027,8 @@ def validate():
     (DIST / 'fuentes.txt').write_text('\n'.join(source_lines), encoding='utf-8')
     credit_lines = ['MEDIOS AUDIOVISUALES Y CRÉDITOS', '']
     for credit in script['credits']:
-        credit_lines.extend([f"Escenas {', '.join(map(str, credit.get('scenes_used', [credit['scene']))))}: {credit['title']}",
+        used_scenes = credit.get('scenes_used') or [credit['scene']]
+        credit_lines.extend([f"Escenas {', '.join(map(str, used_scenes))}: {credit['title']}",
                              f"Autor: {credit['author']}", f"Licencia: {credit['license']}",
                              f"Licencia URL: {credit['license_url']}", f"Origen: {credit['page']}", ''])
     credit_lines += ['Música y efectos: generados algorítmicamente en este proyecto (sin muestras de terceros).',
