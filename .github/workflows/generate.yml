@@ -51,8 +51,9 @@ jobs:
       - name: 4 · Instalar dependencias
         run: |
           python -m pip install -r requirements.txt
-          cd render && npm install --no-audit --no-fund --prefer-offline
-          npx remotion browser ensure
+          cd render
+          npm install --no-audit --no-fund --prefer-offline
+          node --input-type=module -e "import {ensureBrowser} from '@remotion/renderer'; await ensureBrowser();"
       - name: 5 · Presupuesto mensual
         run: |
           echo "PIPELINE_START_EPOCH=$(date +%s)" >> "$GITHUB_ENV"
