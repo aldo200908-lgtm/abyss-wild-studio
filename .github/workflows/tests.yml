@@ -37,6 +37,23 @@ jobs:
           printf '%s\n' '{"topic":"Prueba","title":"Prueba","duration":30,"fps":30,"beats":[],"captions":[],"caption_layout":{"y":0.5,"max_width":0.9,"max_text_px":900}}' > public/data.json
           node --input-type=module -e "import {bundle} from '@remotion/bundler'; import path from 'node:path'; await bundle({entryPoint: path.resolve('src/index.jsx')}); console.log('RENDER_BUNDLE_OK');"
       - name: Verify Python syntax
-        run: python -m compileall -q pipeline.py viral_visuals.py audio_design.py word_alignment.py narration_budget.py motion_math.py topic_research.py topic_guard.py response_shapes.py offline_voice.py native_spanish_voice.py spanish_voice_text.py voice_bank.py tests
+        run: python -m compileall -q pipeline.py smoke_render.py viral_visuals.py audio_design.py word_alignment.py narration_budget.py motion_math.py topic_research.py topic_guard.py response_shapes.py offline_voice.py native_spanish_voice.py spanish_voice_text.py voice_bank.py tests
       - name: Unit tests
         run: python -m unittest discover -s tests -p 'test_*.py' -v
+      - name: Headless B-roll, subtitles and mascot render smoke
+        run: |
+          python smoke_render.py
+          cd render
+          npm run render
+          cd ..
+          python - <<'PY'
+          import json,subprocess
+          path='work/silent.mp4'
+          doc=json.loads(subprocess.check_output([
+            'ffprobe','-v','error','-show_streams','-show_format',
+            '-of','json',path],text=True))
+          stream=next(v for v in doc['streams'] if v['codec_type']=='video')
+          assert (stream['width'],stream['height'])==(1080,1920)
+          assert float(doc['format']['duration'])>=3.4
+          print('HEADLESS_BROLL_RENDER_OK',doc['format']['duration'])
+          PY
