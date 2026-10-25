@@ -32,7 +32,7 @@ def predict_duration(scenes, config):
                  ESTIMATE_MARGIN, 2)
 
 
-def remove_secondary_scene(scenes):
+def remove_secondary_scene(scenes, config=None):
     """Remove one middle scene WITHOUT rewriting approved factual statements.
 
     Opening two and final two scenes are preserved for clear hook and ending.
@@ -48,7 +48,13 @@ def remove_secondary_scene(scenes):
     ranked = sorted(available, key=lambda i: (
         -len(palabras(normalizar(scenes[i]['line']))),
         abs(i - middle), i))
-    cut = ranked[0]
-    result = deepcopy(scenes)
-    dropped = result.pop(cut)
-    return result, cut, dropped
+    for cut in ranked:
+        result = deepcopy(scenes)
+        dropped = result.pop(cut)
+        if config is not None:
+            try:
+                predict_duration(result, config)
+            except ValueError:
+                continue
+        return result, cut, dropped
+    return None
