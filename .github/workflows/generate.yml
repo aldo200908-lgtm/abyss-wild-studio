@@ -54,6 +54,8 @@ jobs:
           cd render
           npm install --no-audit --no-fund --prefer-offline
           node --input-type=module -e "import {ensureBrowser} from '@remotion/renderer'; await ensureBrowser();"
+      - name: 4b · Probar formatos JSON de Gemini
+        run: python -m unittest discover -s tests -p 'test_*.py' -v
       - name: 5 · Presupuesto mensual
         run: |
           echo "PIPELINE_START_EPOCH=$(date +%s)" >> "$GITHUB_ENV"
