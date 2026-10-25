@@ -31,7 +31,7 @@ PUBLIC = ROOT / 'render' / 'public'
 MEDIA = PUBLIC / 'media'
 DIST = ROOT / 'dist'
 HEADERS = {'User-Agent': 'ABYSSWILDShorts/1.0 (educational video; contact: https://github.com)', 'Accept': 'application/json'}
-MODEL = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash-lite')
+MODEL = os.getenv('GEMINI_MODEL', 'gemini-3.5-flash-lite')
 API_KEY = os.getenv('GEMINI_API_KEY', '')
 GEMINI_HISTORY = collections.deque()
 USAGE = {'input_tokens': 0, 'output_tokens': 0, 'requests': 0}
@@ -108,6 +108,42 @@ def wikipedia(topic):
 
 
 class Gemini:
+    """JSON Gemini API client with bounded retries and model fallback."""
+
+    def __init__(self):
+        self.model = MODEL
+        self.tried_models = {self.model}
+
+    def switch_to_available_model(self):
+        """On 404, select only a model the current API key can actually use."""
+        global MODEL
+        try:
+            r = requests.get(
+                'https://generativelanguage.googleapis.com/v1beta/models',
+                headers={'x-goog-api-key': API_KEY},
+                params={'pageSize': 1000}, timeout=25)
+            r.raise_for_status()
+            available = {
+                m['name'].removeprefix('models/')
+                for m in r.json().get('models', [])
+                if 'generateContent' in m.get('supportedGenerationMethods', [])
+            }
+        except (requests.RequestException, ValueError, KeyError) as err:
+            raise RuntimeError(
+                'Gemini devolvió 404 y no se pudo consultar la lista de modelos '
+                'habilitados para esta clave.') from err
+        for candidate in ('gemini-3.5-flash-lite', 'gemini-3.1-flash-lite',
+                          'gemini-3.8-flash', 'gemini-3.6-flash'):
+            if candidate in available and candidate not in self.tried_models:
+                self.model = candidate
+                MODEL = candidate
+                self.tried_models.add(candidate)
+                log(f'Modelo no disponible; se utilizará {candidate}.')
+                return
+        raise RuntimeError(
+            'Ninguno de los modelos Flash/Lite alternativos está habilitado '
+            'para esta clave. Revisa Models en Google AI Studio.')
+
     def generate(self, prompt, photo=None, temperature=0.35):
         if not API_KEY:
             raise RuntimeError('Falta el Secret GEMINI_API_KEY.')
@@ -118,32 +154,48 @@ class Gemini:
         payload = {'contents': [{'role': 'user', 'parts': parts}],
                    'generationConfig': {'temperature': temperature,
                                         'responseMimeType': 'application/json'}}
-        url = f'https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent'
-        for attempt in range(4):
+        for attempt in range(6):
             now = time.monotonic()
             while GEMINI_HISTORY and now - GEMINI_HISTORY[0] >= 60:
                 GEMINI_HISTORY.popleft()
             if len(GEMINI_HISTORY) >= 15:
                 time.sleep(max(0.5, 60 - (now - GEMINI_HISTORY[0]) + 0.3))
             GEMINI_HISTORY.append(time.monotonic())
+            url = (f'https://generativelanguage.googleapis.com/v1beta/models/'
+                   f'{self.model}:generateContent')
             try:
-                r = requests.post(url, params={'key': API_KEY}, json=payload, timeout=70)
-                if r.status_code in (429, 500, 502, 503, 504):
-                    raise requests.HTTPError(f'Gemini temporal {r.status_code}', response=r)
+                r = requests.post(url, headers={'x-goog-api-key': API_KEY},
+                                  json=payload, timeout=70)
                 r.raise_for_status()
                 body = r.json()
                 usage = body.get('usageMetadata', {})
                 USAGE['input_tokens'] += usage.get('promptTokenCount', 0)
                 USAGE['output_tokens'] += usage.get('candidatesTokenCount', 0)
                 USAGE['requests'] += 1
-                answer = body['candidates'][0]['content']['parts'][0]['text']
+                answer = ''.join(
+                    p.get('text', '') for p in body['candidates'][0]['content']['parts']
+                    if not p.get('thought'))
                 return json.loads(answer.strip())
-            except (requests.HTTPError, requests.ConnectionError, requests.Timeout, ValueError, KeyError, IndexError) as err:
-                if attempt == 3 or (isinstance(err, requests.HTTPError) and err.response is not None
-                                    and err.response.status_code not in (429, 500, 502, 503, 504)):
-                    raise RuntimeError(f'Gemini no respondió correctamente: {err}') from err
-                time.sleep(min(40, 3 * 2 ** attempt + random.random()))
-        raise RuntimeError('Gemini no disponible.')
+            except requests.HTTPError as err:
+                status = err.response.status_code if err.response is not None else None
+                if status == 404:
+                    self.switch_to_available_model()
+                    continue
+                if status not in (429, 500, 502, 503, 504):
+                    raise RuntimeError(
+                        f'Gemini HTTP {status} en {self.model}. '
+                        'Comprueba los permisos, la clave y el nivel gratuito.') from err
+                if attempt == 5:
+                    raise RuntimeError(
+                        f'Gemini HTTP {status} tras varios reintentos: '
+                        'revisa la cuota o vuelve a intentarlo después.') from err
+            except (requests.ConnectionError, requests.Timeout, ValueError,
+                    KeyError, IndexError) as err:
+                if attempt == 5:
+                    raise RuntimeError(
+                        f'No se pudo obtener JSON de Gemini ({self.model}): {err}') from err
+            time.sleep(min(40, 3 * 2 ** attempt + random.random()))
+        raise RuntimeError('Gemini no disponible tras los reintentos.')
 
 
 def create_script(topic, facts, sources):
