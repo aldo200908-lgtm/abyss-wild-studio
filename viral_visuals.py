@@ -44,7 +44,7 @@ def run_ffmpeg(cmd):
         raise RuntimeError('Error FFmpeg: ' + result.stderr[-1600:])
 
 
-def prepare_image(src, dest, seconds, motion_index):
+def prepare_image(src, dest, seconds, motion_index, focal=None):
     """FFmpeg zoompan operates on a properly covered 9:16 still.
 
     zoompan always crops inside the full image at z >= 1, preventing borders.
@@ -74,7 +74,9 @@ def prepare_image(src, dest, seconds, motion_index):
     # then FFmpeg zoompan guarantees a filled output frame at every timestamp.
     with Image.open(src) as opened:
         opened = ImageOps.exif_transpose(opened).convert('RGB')
-        cover = ImageOps.fit(opened, (W, H), method=Image.Resampling.LANCZOS)
+        center = ((focal or {}).get('x', .5), (focal or {}).get('y', .5))
+        cover = ImageOps.fit(opened, (W, H), method=Image.Resampling.LANCZOS,
+                             centering=center)
         tmp = dest.with_name(dest.stem + '_source.jpg')
         cover.save(tmp, 'JPEG', quality=93)
     filt = (f"zoompan=z='{z}':x='{x}':y='(ih-ih/zoom)/2':"
