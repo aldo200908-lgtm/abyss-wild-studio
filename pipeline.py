@@ -740,7 +740,16 @@ def audio_files():
     visual = load_json(PUBLIC / 'data.json')
     cuts = [b['start'] for b in visual['beats']]
     make_soundtracks(script['duration'], cuts, write_wav, WORK)
-    log('Audio: música de suspenso en bucle, golpe del gancho y ambiente contextual')
+    # Set the un-ducked music twenty LUFS below the actual Azure voice,
+    # then sidechain ducking makes dialogue even easier to understand.
+    voice_i = measured_lufs(WORK / 'voice.mp3')
+    bed_i = measured_lufs(WORK / 'music.wav')
+    bed_gain = max(-40., min(6., voice_i - 20. - bed_i))
+    save_json(WORK / 'bed_level.json',
+              {'voice_lufs': voice_i, 'raw_bed_lufs': bed_i,
+               'music_gain_db': round(bed_gain, 2)})
+    log(f'Audio: BGM ajustada a voz -20 LUFS ({bed_gain:+.2f}dB), '
+        'golpe al segundo 3 y ambiente contextual')
 
 
 
@@ -753,7 +762,7 @@ def write_wav(path, signal, sample_rate):
         f.writeframes((signal * 32767).astype('<i2').tobytes())
 
 
-def master_graph(ceiling=0.62, gain_db=0.0):
+def master_graph(ceiling=0.62, gain_db=0.0, bed_gain_db=-20.0):
     """AAC may overshoot the loudnorm true peak; enforce a final PCM limiter.
 
     Do not relax the -1.5 dBTP check. The limiter is after loudnorm, with
@@ -764,7 +773,7 @@ def master_graph(ceiling=0.62, gain_db=0.0):
     if not -3 <= gain_db <= 4:
         raise ValueError('Ajuste de ganancia fuera de rango')
     return ('[1:a]aresample=44100,asplit=2[voicemix][voiceside];'
-            '[2:a]volume=-20dB[bed];'
+            f'[2:a]volume={bed_gain_db:+.2f}dB[bed];'
             '[bed][voiceside]sidechaincompress=threshold=0.02:ratio=8:attack=15:release=280[duck];'
             '[duck][voicemix][3:a]amix=inputs=3:duration=longest:normalize=0,'
             'loudnorm=I=-14:TP=-1.9:LRA=11,'
@@ -776,6 +785,9 @@ def master():
     audio_files()
     DIST.mkdir(exist_ok=True)
     video = DIST / 'video.mp4'
+    level_path = WORK / 'bed_level.json'
+    bed_gain_db = (float(load_json(level_path)['music_gain_db'])
+                   if level_path.is_file() else -20.0)
     # Measure the actual AAC file, then correct loudness and peak together.
     # Each pass uses ORIGINAL audio tracks; never re-encode the previous AAC.
     ceiling, gain_db = 0.62, 0.0
@@ -783,7 +795,7 @@ def master():
         subprocess.run(['ffmpeg', '-hide_banner', '-y', '-i', str(WORK / 'silent.mp4'),
                         '-i', str(WORK / 'voice.mp3'), '-i', str(WORK / 'music.wav'),
                         '-i', str(WORK / 'effects.wav'), '-filter_complex',
-                        master_graph(ceiling, gain_db),
+                        master_graph(ceiling, gain_db, bed_gain_db),
                         '-map', '0:v:0', '-map', '[aout]', '-c:v', 'copy', '-c:a', 'aac',
                         '-b:a', '192k', '-ar', '44100', '-shortest',
                         '-movflags', '+faststart', str(video)], check=True)
