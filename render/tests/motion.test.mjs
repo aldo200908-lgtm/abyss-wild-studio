@@ -36,6 +36,14 @@ test('camera is horizontal-only, fully covered throughout zoom', () => {
 test('focal point is normalized subject ROI', () => {
   assert.equal(focalCSS({x:.8,y:.25}), '80% 25%');
   assert.equal(focalCSS({x:2,y:-1}), '100% 0%');
+  // A panoramic image must place its focal point near the screen center
+  // rather than the outer 80% of the visible frame.
+  const wide={width:3100,height:1050};
+  const [px,py]=focalCSS({x:.8,y:.25},wide).split(' ').map(parseFloat);
+  const scaledWidth=wide.width*1920/wide.height;
+  const focalScreenX=.8*scaledWidth + (px/100)*(1080-scaledWidth);
+  assert.ok(Math.abs(focalScreenX-540)<.01);
+  assert.equal(py,50);
 });
 
 test('caption always fits width and anchors to midframe', () => {
