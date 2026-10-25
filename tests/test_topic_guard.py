@@ -54,9 +54,6 @@ class TopicFocusTests(unittest.TestCase):
         self.assertTrue(any('pregunta' in issue for issue in issues))
 
 
-if __name__ == '__main__':
-    unittest.main()
-
     def test_question_topic_can_use_synonym_instead_of_exact_phrase(self):
         lines = [
             'El mar puede brillar durante la noche',
@@ -86,3 +83,7 @@ if __name__ == '__main__':
                                    title='Un edificio impresionante',
                                    anchors=['agujeros negros', 'gravedad'])
         self.assertTrue(problems)
+
+
+if __name__ == '__main__':
+    unittest.main()
