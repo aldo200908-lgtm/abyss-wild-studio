@@ -24,6 +24,7 @@ import requests
 from PIL import Image
 from response_shapes import normalize_script_payload, normalize_audit_payload
 from offline_voice import narration, VOICE_PAGE
+from topic_guard import topic_problems
 
 ROOT = Path(__file__).resolve().parent
 WORK = ROOT / 'work'
@@ -83,16 +84,29 @@ def normalized(word):
 
 
 def wikipedia(topic):
-    hits = mediawiki({'action': 'query', 'list': 'search', 'srsearch': topic, 'srlimit': 3})['query']['search']
-    if not hits:
-        raise RuntimeError('Wikipedia no encontró fuentes para el tema. No se inventarán datos.')
-    titles = '|'.join(h['title'] for h in hits[:2])
-    result = mediawiki({'action': 'query', 'prop': 'extracts', 'titles': titles,
-                        'explaintext': 1, 'exchars': 14000})['query']['pages']
+    """Use the topic's own article, never unrelated search hits."""
+    direct = mediawiki({'action': 'query', 'prop': 'extracts', 'titles': topic,
+                        'redirects': 1, 'explaintext': 1, 'exchars': 22000})['query']['pages']
+    matching = [p for p in direct if 'missing' not in p and
+                normalized(p.get('title', '')) == normalized(topic)]
+    if not matching:
+        hits = mediawiki({'action': 'query', 'list': 'search', 'srsearch': topic,
+                          'srlimit': 5})['query']['search']
+        matched_hits = [h for h in hits if normalized(h['title']) == normalized(topic)]
+        if not matched_hits:
+            raise RuntimeError('Wikipedia no tiene un artículo cuyo título coincida con el '
+                               'tema. Usa un tema preciso; no se investigarán artículos '
+                               'tangenciales.')
+        matching = mediawiki({'action': 'query', 'prop': 'extracts',
+                              'titles': matched_hits[0]['title'],
+                              'redirects': 1, 'explaintext': 1,
+                              'exchars': 22000})['query']['pages']
     facts, sources = [], []
-    for p in result:
-        extract = p.get('extract', '').split('\nReferencias\n')[0].split('\nEnlaces externos\n')[0]
+    for p in matching:
         title = p.get('title', '')
+        if normalized(title) != normalized(topic):
+            continue
+        extract = p.get('extract', '').split('\nReferencias\n')[0].split('\nEnlaces externos\n')[0]
         if not extract:
             continue
         url = 'https://es.wikipedia.org/wiki/' + quote(title.replace(' ', '_'))
@@ -101,9 +115,10 @@ def wikipedia(topic):
             if 35 <= len(sentence) <= 360 and len(facts) < 90:
                 facts.append({'id': f'F{len(facts)+1}', 'text': sentence, 'url': url})
     if len(facts) < 4:
-        raise RuntimeError('Wikipedia no ofrece suficiente texto verificable en español.')
+        raise RuntimeError('El artículo exacto no ofrece suficiente texto verificable.')
     save_json(WORK / 'facts.json', {'topic': topic, 'facts': facts, 'sources': sources})
-    log(f'Investigación: {len(facts)} fragmentos, {len(sources)} páginas Wikipedia')
+    log(f'Investigación centrada en {topic}: {len(facts)} fragmentos, '
+        f'{len(sources)} páginas con título coincidente')
     return facts, sources
 
 
@@ -204,6 +219,10 @@ def create_script(topic, facts, sources):
     gm = Gemini()
     banned = 'T-Rex, anaconda, boa actual' if 'titanoboa' in topic.lower() else 'objetos ajenos al tema'
     prompt = f'''Escribe un Short divulgativo EN ESPAÑOL NEUTRO sobre «{topic}».
+El protagonista EXCLUSIVO es «{topic}»: NO cambies a su yacimiento, lugar del hallazgo,
+minería, geología, economía ni cualquier tema secundario. Menciona literalmente «{topic}»
+en el gancho de las primeras 3 escenas, en el título y en la pregunta final.
+En Titanoboa centra la narración en su tamaño, fósiles, vida y hábitat: nunca en el carbón de Cerrejón.
 SOLO puedes afirmar información LITERALMENTE respaldada por estos fragmentos de Wikipedia:
 {facts_text}
 Devuelve un OBJETO JSON cuya raíz sea una llave de apertura y no una lista. Regresa ÚNICAMENTE JSON: {{"title":"...", "scenes":[{{"line":"...", "fact_ids":["F1"], "visual_query":"término exacto visual en inglés", "visual_type":"fossil|landscape|reconstruction|infographic", "label":"FÓSIL REAL|ILUSTRACIÓN|ARCHIVO DE APOYO|DATO VERIFICADO", "compare_m":null}}]}}.
@@ -227,6 +246,10 @@ Visual_query debe describir EXCLUSIVAMENTE lo que representa visualmente la fras
         if not scenes[-1]['line'].strip().endswith('?') and not scenes[-1]['line'].strip().endswith('？'):
             continue
         if not all(s.get('fact_ids') for s in scenes[:-1]) or scenes[-1].get('fact_ids'):
+            continue
+        focus = topic_problems(topic, scenes, result.get('title', ''))
+        if focus:
+            log('Guion DESCARTADO por desviarse del tema: ' + '; '.join(focus))
             continue
         nwords = sum(len(tokens(s['line'])) for s in scenes)
         if not 78 <= nwords <= 112:
