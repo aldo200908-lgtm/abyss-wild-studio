@@ -1,5 +1,5 @@
 {
-  "voice": "es-PE-AlexNeural",
+  "voice": "es-MX-JorgeNeural",
   "tts_provider": "azure",
   "rate_percent": -2,
   "phrase_min_words": 8,
