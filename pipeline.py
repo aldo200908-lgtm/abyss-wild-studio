@@ -745,21 +745,60 @@ def write_wav(path, signal, sample_rate):
         f.writeframes((signal * 32767).astype('<i2').tobytes())
 
 
+def master_graph(ceiling=0.62):
+    """AAC may overshoot the loudnorm true peak; enforce a final PCM limiter.
+
+    Do not relax the -1.5 dBTP check. The limiter is after loudnorm, with
+    makeup disabled, so it cannot amplify a normalized peak.
+    """
+    if not 0.25 <= ceiling <= 0.8:
+        raise ValueError('Techo del limitador fuera del rango seguro')
+    return ('[1:a]aresample=44100,asplit=2[voicemix][voiceside];'
+            '[2:a]volume=-25dB[bed];'
+            '[bed][voiceside]sidechaincompress=threshold=0.02:ratio=8:attack=15:release=280[duck];'
+            '[duck][voicemix][3:a]amix=inputs=3:duration=longest:normalize=0,'
+            'loudnorm=I=-14:TP=-1.9:LRA=11,'
+            f'alimiter=limit={ceiling:.3f}:attack=5:release=80:level=0[aout]')
+
+
 def master():
     audio_files()
     DIST.mkdir(exist_ok=True)
-    graph = ('[1:a]aresample=44100,asplit=2[voicemix][voiceside];'
-             '[2:a]volume=-25dB[bed];'
-             '[bed][voiceside]sidechaincompress=threshold=0.02:ratio=8:attack=15:release=280[duck];'
-             '[duck][voicemix][3:a]amix=inputs=3:duration=longest:normalize=0,'
-             'loudnorm=I=-14:TP=-1.9:LRA=11:print_format=json[aout]')
-    subprocess.run(['ffmpeg', '-hide_banner', '-y', '-i', str(WORK / 'silent.mp4'),
-                    '-i', str(WORK / 'voice.mp3'), '-i', str(WORK / 'music.wav'),
-                    '-i', str(WORK / 'effects.wav'), '-filter_complex', graph,
-                    '-map', '0:v:0', '-map', '[aout]', '-c:v', 'copy', '-c:a', 'aac',
-                    '-b:a', '192k', '-ar', '44100', '-shortest',
-                    '-movflags', '+faststart', str(DIST / 'video.mp4')], check=True)
-    log('FFmpeg: mezcla, ducking y normalización final realizada')
+    video = DIST / 'video.mp4'
+    # The second pass is only used if the AAC decode violates the peak limit.
+    # Both attempts remaster ORIGINAL input tracks (no generation loss).
+    for attempt, ceiling in enumerate((0.62, 0.48), start=1):
+        subprocess.run(['ffmpeg', '-hide_banner', '-y', '-i', str(WORK / 'silent.mp4'),
+                        '-i', str(WORK / 'voice.mp3'), '-i', str(WORK / 'music.wav'),
+                        '-i', str(WORK / 'effects.wav'), '-filter_complex',
+                        master_graph(ceiling),
+                        '-map', '0:v:0', '-map', '[aout]', '-c:v', 'copy', '-c:a', 'aac',
+                        '-b:a', '192k', '-ar', '44100', '-shortest',
+                        '-movflags', '+faststart', str(video)], check=True)
+        peak = measured_true_peak(video)
+        lufs = measured_lufs(video)
+        log(f'Mezcla AAC #{attempt}: {lufs:.2f} LUFS; '
+            f'true peak decodificado {peak:.2f} dBTP '
+            f'(limitador {ceiling:.2f})')
+        if peak <= -1.5 and -16 <= lufs <= -12:
+            return
+        if lufs < -16 or lufs > -12:
+            raise RuntimeError(f'Volumen final {lufs:.2f} LUFS fuera de '
+                               '-16 a -12; no se publicará audio defectuoso')
+    raise RuntimeError(f'El AAC sigue excediendo -1.5 dBTP '
+                       f'(medición {peak:.2f} dBTP) tras dos mezclas')
+
+
+def measured_true_peak(path):
+    """Match the actual decoded AAC 4x resampling used by final validation."""
+    raw = subprocess.run(
+        ['ffmpeg', '-hide_banner', '-loglevel', 'error', '-i', str(path),
+         '-vn', '-ac', '1', '-ar', '176400', '-f', 'f32le', '-'],
+        capture_output=True, check=True).stdout
+    samples = np.frombuffer(raw, dtype='<f4')
+    if samples.size < 1000:
+        raise RuntimeError('Sin muestras de audio para medir true peak')
+    return 20 * math.log10(max(float(np.max(np.abs(samples))), 1e-9))
 
 
 def measured_lufs(path):
@@ -797,15 +836,8 @@ def validate():
     # This does not replace an optical assessment of individual frames.
     lufs = measured_lufs(path)
     assert -16 <= lufs <= -12, f'Volumen {lufs:.1f} LUFS fuera de tolerancia'
-    # True-peak approximation by resampling to 176.4kHz (~4x).
-    raw = subprocess.run(
-        ['ffmpeg', '-hide_banner', '-loglevel', 'error', '-i', str(path),
-         '-vn', '-ac', '1', '-ar', '176400', '-f', 'f32le', '-'],
-        capture_output=True, check=True).stdout
-    peaks = np.frombuffer(raw, dtype='<f4')
-    if peaks.size < 1000:
-        raise RuntimeError('Sin muestras de audio para medir true peak')
-    true_peak_dbtp = 20 * math.log10(max(float(np.max(np.abs(peaks))), 1e-9))
+    # The SAME post-AAC measurement used during mastering.
+    true_peak_dbtp = measured_true_peak(path)
     assert true_peak_dbtp <= -1.5, (
         f'True peak {true_peak_dbtp:.2f} dBTP excede -1.5 dBTP')
     voice_meta = load_json(WORK / 'voice_meta.json')
