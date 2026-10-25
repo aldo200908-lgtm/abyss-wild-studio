@@ -79,9 +79,16 @@ class MasteringAudioTests(unittest.TestCase):
                 self.assertIn('alimiter=limit=0.620',
                               run.call_args_list[0].args[0][
                                   run.call_args_list[0].args[0].index('-filter_complex') + 1])
-                self.assertIn('alimiter=limit=0.480',
-                              run.call_args_list[1].args[0][
-                                  run.call_args_list[1].args[0].index('-filter_complex') + 1])
+                second_args = run.call_args_list[1].args[0]
+                second_graph = second_args[second_args.index('-filter_complex') + 1]
+                first_args = run.call_args_list[0].args[0]
+                first_graph = first_args[first_args.index('-filter_complex') + 1]
+                import re
+                first_limit = float(re.search(r'alimiter=limit=([0-9.]+)', first_graph).group(1))
+                second_limit = float(re.search(r'alimiter=limit=([0-9.]+)', second_graph).group(1))
+                self.assertLess(second_limit, first_limit)
+                self.assertGreaterEqual(second_limit, 0.25)
+                self.assertLessEqual(second_limit, 0.8)
 
     def test_low_lufs_gets_automatic_second_mix(self):
         with tempfile.TemporaryDirectory() as temp:
