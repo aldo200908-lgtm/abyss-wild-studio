@@ -144,6 +144,21 @@ def wordmarks_per_scene(scenes, scene_time_ranges):
     return marks
 
 
+def trim_tts_wav(source, dest):
+    """FFmpeg trims only the leading and trailing silence."""
+    filt = ('silenceremove=start_periods=1:start_duration=0.035:'
+            'start_threshold=-48dB,areverse,'
+            'silenceremove=start_periods=1:start_duration=0.035:'
+            'start_threshold=-48dB,areverse')
+    subprocess.run(['ffmpeg', '-v', 'error', '-y', '-i', str(source),
+                    '-af', filt, '-c:a', 'pcm_s16le', str(dest)], check=True)
+    with wave.open(str(dest), 'rb') as w:
+        length = w.getnframes() / w.getframerate()
+    if length < .25:
+        raise RuntimeError('Fragmento de TTS sin audio válido')
+    return length
+
+
 def render_native_voice(scenes, mp3_path, settings, dictionary, synth):
     """Voice source is normalized Spanish, not phonetic guesses in subtitles.
 
