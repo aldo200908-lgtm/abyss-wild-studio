@@ -42,7 +42,7 @@ const Scene = ({item}) => {
   const {x, scale} = motionAt(camera, progress);
   const bg = BG[item.beat % BG.length];
   const visual = item.asset;
-  const objectPosition = focalCSS(camera.focal_point);
+  const objectPosition = focalCSS(camera.focal_point, visual);
 
   // CSS order is intentional: translate output pixels AFTER cover-image scale.
   // The renderer's media element first covers the 1080x1920 viewport.
