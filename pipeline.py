@@ -2,7 +2,6 @@
 """ABYSS WILD: research -> script -> assets -> audio master -> verification.
 No external paid search. Fails closed when sourcing, licensing or checks fail.
 """
-import asyncio
 import base64
 import collections
 import hashlib
@@ -20,11 +19,11 @@ import unicodedata
 from urllib.parse import quote
 import wave
 
-import edge_tts
 import numpy as np
 import requests
 from PIL import Image
 from response_shapes import normalize_script_payload, normalize_audit_payload
+from offline_voice import narration, VOICE_PAGE
 
 ROOT = Path(__file__).resolve().parent
 WORK = ROOT / 'work'
@@ -273,46 +272,18 @@ def duration(path):
     return float(ffprobe(path)['format']['duration'])
 
 
-async def synthesize(text, rate, target):
-    voice = os.getenv('EDGE_VOICE', 'es-PE-CamilaNeural')
-    wordmarks = []
-    sound = bytearray()
-    speaker = edge_tts.Communicate(text=text, voice=voice, rate=f'{rate:+d}%')
-    async for chunk in speaker.stream():
-        if chunk['type'] == 'audio':
-            sound.extend(chunk['data'])
-        elif chunk['type'] == 'WordBoundary':
-            wordmarks.append({'text': chunk.get('text', ''),
-                              'start': chunk.get('offset', 0) / 10_000_000,
-                              'end': (chunk.get('offset', 0) + chunk.get('duration', 0)) / 10_000_000})
-    if len(sound) < 1000 or len(wordmarks) < 40:
-        raise RuntimeError('edge-tts no devolvió voz y WordBoundary suficientes.')
-    target.write_bytes(sound)
-    return wordmarks
-
-
 def make_timing(script):
+    """Synthesize Spanish narration locally with exact scene timings.
+
+    Word-level caption timestamps are estimates interpolated within each
+    measured scene; Piper does not provide Edge WordBoundary events.
+    """
     scenes = script['scenes']
-    # Alternate comma/period pauses without inserting or deleting spoken words.
-    # Keep question punctuation intact at the end.
-    text = ''.join(s['line'].strip().rstrip('.,; ') +
-                   (', ' if i % 4 == 0 else '; ' if i % 4 == 1 else '. ')
-                   for i, s in enumerate(scenes[:-1])) + scenes[-1]['line'].strip()
-    marks = []
-    rate = 0
-    for trial in range(3):
-        marks = asyncio.run(synthesize(text, rate, WORK / 'voice.mp3'))
-        d = duration(WORK / 'voice.mp3')
-        if 30 <= d <= 45:
-            break
-        if trial == 2:
-            raise RuntimeError(f'Locución {d:.1f}s fuera de 30-45s; guion no publicado.')
-        factor = d / 37.0
-        rate = max(-35, min(35, int((1 + rate / 100) * factor * 100 - 100)))
-    expected = [normalized(w) for s in scenes for w in tokens(s['line'])]
-    actual = [normalized(w['text']) for w in marks]
-    if len(expected) != len(actual) or sum(a != b for a, b in zip(expected, actual)) > 3:
-        raise RuntimeError('WordBoundary no se alinea con el texto narrado; se evita subtítulo falso.')
+    marks, d, engine = narration(scenes, WORK / 'voice.mp3')
+    expected = [normalized(w) for scene in scenes for w in tokens(scene['line'])]
+    actual = [normalized(mark['text']) for mark in marks]
+    if expected != actual:
+        raise RuntimeError('Tokens de subtítulos no coinciden con la narración')
     cut = 0
     timed_scenes = []
     for index, scene in enumerate(scenes):
@@ -321,22 +292,28 @@ def make_timing(script):
         end = marks[cut + count]['start'] if cut + count < len(marks) else d
         start = max(0, start)
         end = min(d, max(start + 0.1, end))
-        timed_scenes.append(dict(scene, start=round(start, 3), end=round(end, 3), scene_index=index))
+        timed_scenes.append(dict(scene, start=round(start, 3),
+                                 end=round(end, 3), scene_index=index))
         cut += count
     captions = []
-    for i, mark in enumerate(marks):
-        if captions and len(captions[-1]['words']) < 3 and \
-           sum(len(w['text']) for w in captions[-1]['words']) + len(mark['text']) <= 17 and \
-           mark['start'] - captions[-1]['start'] < .85:
+    for mark in marks:
+        if (captions and len(captions[-1]['words']) < 3 and
+                sum(len(w['text']) for w in captions[-1]['words'])
+                + len(mark['text']) <= 17 and
+                mark['start'] - captions[-1]['start'] < .85):
             captions[-1]['words'].append(mark)
             captions[-1]['end'] = mark['end']
         else:
-            captions.append({'start': mark['start'], 'end': mark['end'], 'words': [mark]})
+            captions.append({'start': mark['start'], 'end': mark['end'],
+                             'words': [mark]})
     script['timeline'] = timed_scenes
     script['captions'] = captions
     script['duration'] = round(d, 3)
+    script['voice_engine'] = engine
+    script['word_timing_method'] = 'interpolated_per_measured_scene'
     save_json(WORK / 'script.json', script)
-    log(f'Voz {d:.1f}s, {len(marks)} palabras sincronizadas')
+    log(f'Voz local ({engine}) {d:.1f}s, {len(marks)} palabras '
+        'con tiempos aproximados dentro de escenas medidas')
 
 
 def valid_license(ext):
@@ -632,7 +609,9 @@ def validate():
                              f"Autor: {credit['author']}", f"Licencia: {credit['license']}",
                              f"Licencia URL: {credit['license_url']}", f"Origen: {credit['page']}", ''])
     credit_lines += ['Música y efectos: generados algorítmicamente en este proyecto (sin muestras de terceros).',
-                     'Voz: edge-tts / Microsoft Edge online voices (sujeto a condiciones de servicio).',
+                     'Voz: ' + script.get('voice_engine', 'Piper') + ' (síntesis local en GitHub Actions).',
+                      'Piper modelo español es_MX-ald-medium: ' + VOICE_PAGE + '.',
+                      'Subtítulos: estimación por palabra dentro de escenas de audio medidas; no WordBoundary real.',
                      'Gráficos tipográficos originales; font Anton (SIL Open Font License).',
                      'Wikipedia: textos sujetos a CC BY-SA y atribución mediante fuentes.txt.',
                      'Material de apoyo o ilustración no constituye fotografía del animal prehistórico.',
@@ -661,6 +640,8 @@ def validate():
     estimated_pen = estimated_usd * float(os.environ.get('USD_PEN', '3.50'))
     report = {'topic': script['topic'], 'duration_seconds': round(d, 2), 'lufs': lufs,
               'gemini_model': MODEL, 'gemini_requests': USAGE['requests'],
+               'voice_engine': script.get('voice_engine', 'Piper'),
+               'word_timing_method': script.get('word_timing_method', 'unknown'),
               'input_tokens': USAGE['input_tokens'], 'output_tokens': USAGE['output_tokens'],
               'render_seconds': secs, 'action_minutes_approx': round(elapsed, 2),
               'runner_cost_pen_conservative': round(estimated_pen, 3),
