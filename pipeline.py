@@ -727,6 +727,7 @@ def choose_assets(script):
                      len(script['timeline'])-1)
         scene = dict(script['timeline'][index])
         scene['topic'] = script['topic']
+        scene['visual_exclusions'] = script.get('visual_exclusions', [])
         asset = scene_media.get(index)
         reused_this_shot = False
         if asset is None:
