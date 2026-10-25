@@ -16,6 +16,15 @@ import numpy as np
 from spanish_voice_text import (normalizar, fonetizar, load_dictionary,
                                 palabras, grupos_de_frases)
 
+class NarrationDurationError(RuntimeError):
+    """Measured natural voice is outside the allowed video length."""
+    def __init__(self, seconds):
+        self.seconds = float(seconds)
+        super().__init__(
+            f'Locución española de {seconds:.1f}s fuera de 30–45s; '
+            'acortar el guion verificado sin acelerar la voz')
+
+
 VOICES = (
     'es-PE-AlexNeural', 'es-PE-CamilaNeural',
     'es-CO-GonzaloNeural', 'es-CO-SalomeNeural', 'es-MX-JorgeNeural',
@@ -191,8 +200,7 @@ def render_native_voice(scenes, mp3_path, settings, dictionary, synth):
                     gaps.append(round(pause, 3))
         seconds = offset / rate
         if not 30 <= seconds <= 45:
-            raise RuntimeError(f'Locución española de {seconds:.1f}s fuera del '
-                               'rango 30–45s; revisar guion en vez de acelerar voz')
+            raise NarrationDurationError(seconds)
         mp3_path = Path(mp3_path)
         mp3_path.parent.mkdir(parents=True, exist_ok=True)
         subprocess.run(['ffmpeg', '-hide_banner', '-loglevel', 'error', '-y',
