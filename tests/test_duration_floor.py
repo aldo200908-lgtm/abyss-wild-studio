@@ -114,9 +114,9 @@ class NaturallyTimedAzureTest(unittest.TestCase):
                 f.setnchannels(1)
                 f.setsampwidth(2)
                 f.setframerate(sample_rate)
-                f.writeframes((b'\\x00\\x00' * round(sample_rate*.25)) +
+                f.writeframes(bytes(2*round(sample_rate*.25)) +
                               tone.tobytes() +
-                              (b'\\x00\\x00' * round(sample_rate*.30)))
+                              bytes(2*round(sample_rate*.30)))
             measured = trim_tts_wav(input_file, output_file)
             # Removes actual leading/trailing silence, NOT 35ms speech each
             # side as the previous nonzero start_duration filter did.
