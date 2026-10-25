@@ -28,10 +28,25 @@ export const frameCoverage = (camera, progress) => {
   };
 };
 
-export const focalCSS = (point = {x: 0.5, y: 0.5}) => {
+export const focalCSS = (point = {x: 0.5, y: 0.5}, asset = null) => {
   const x = Math.max(0, Math.min(1, Number(point?.x ?? 0.5)));
   const y = Math.max(0, Math.min(1, Number(point?.y ?? 0.5)));
-  return (x * 100) + '% ' + (y * 100) + '%';
+  const width = Number(asset?.width ?? 0);
+  const height = Number(asset?.height ?? 0);
+  if (width <= 0 || height <= 0) {
+    return (x * 100) + '% ' + (y * 100) + '%';
+  }
+  // CSS object-position percentage q aligns q of the image with q of the
+  // viewport; solve for q so focal pixel (x,y) is at viewport CENTER.
+  // Clamp near image boundaries where perfect centering is impossible.
+  const cover = Math.max(W / width, H / height);
+  const renderW = width * cover;
+  const renderH = height * cover;
+  const qx = renderW > W + 0.01 ?
+    Math.max(0, Math.min(1, (x * renderW - W / 2) / (renderW - W))) : .5;
+  const qy = renderH > H + 0.01 ?
+    Math.max(0, Math.min(1, (y * renderH - H / 2) / (renderH - H))) : .5;
+  return (qx * 100) + '% ' + (qy * 100) + '%';
 };
 
 export const captionWidthPx = (word) =>
