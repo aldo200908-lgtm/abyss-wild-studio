@@ -24,6 +24,7 @@ import edge_tts
 import numpy as np
 import requests
 from PIL import Image
+from response_shapes import normalize_script_payload, normalize_audit_payload
 
 ROOT = Path(__file__).resolve().parent
 WORK = ROOT / 'work'
@@ -206,14 +207,18 @@ def create_script(topic, facts, sources):
     prompt = f'''Escribe un Short divulgativo EN ESPAÑOL NEUTRO sobre «{topic}».
 SOLO puedes afirmar información LITERALMENTE respaldada por estos fragmentos de Wikipedia:
 {facts_text}
-Regresa ÚNICAMENTE JSON: {{"title":"...", "scenes":[{{"line":"...", "fact_ids":["F1"], "visual_query":"término exacto visual en inglés", "visual_type":"fossil|landscape|reconstruction|infographic", "label":"FÓSIL REAL|ILUSTRACIÓN|ARCHIVO DE APOYO|DATO VERIFICADO", "compare_m":null}}]}}.
+Devuelve un OBJETO JSON cuya raíz sea una llave de apertura y no una lista. Regresa ÚNICAMENTE JSON: {{"title":"...", "scenes":[{{"line":"...", "fact_ids":["F1"], "visual_query":"término exacto visual en inglés", "visual_type":"fossil|landscape|reconstruction|infographic", "label":"FÓSIL REAL|ILUSTRACIÓN|ARCHIVO DE APOYO|DATO VERIFICADO", "compare_m":null}}]}}.
 Obligatorio: 13-17 escenas, TOTAL 85-105 palabras contando pregunta final, 4-9 palabras por escena, al menos 30 segundos de locución, un cambio de visual cada 2-3 segundos.
 Primera frase: afirmación impactante basada directamente en un fragmento, sin introducción. Una sola idea narrativa, variación de estructura y secuencia, no repetir frases.
 Última escena: pregunta breve sin nuevos hechos (fact_ids vacío); todas las otras escenas con 1-2 IDs válidos y verificables.
 Visual_query debe describir EXCLUSIVAMENTE lo que representa visualmente la frase, no buscar {banned}; usa infographic cuando no haya material exacto. Usa únicamente palabras escritas (sin cifras dígito) en line para sincronizar subtítulos. No atribuyas propiedades no demostradas. No inventes fechas, números, escenas históricas ni citas.'''
     for attempt in range(3):
-        result = gm.generate(prompt + f'\nVariación creativa número {attempt+1}.', temperature=0.45 + .1 * attempt)
-        scenes = result.get('scenes', [])
+        raw_result = gm.generate(prompt + f'\nVariación creativa número {attempt+1}.', temperature=0.45 + .1 * attempt)
+        result = normalize_script_payload(raw_result, topic)
+        if result is None:
+            log(f'Gemini devolvió un guion con estructura no válida (intento {attempt+1}/3); reintentando')
+            continue
+        scenes = result['scenes']
         if not isinstance(scenes, list) or len(scenes) < 10 or len(scenes) > 20:
             continue
         ids = {f['id'] for f in selected}
@@ -237,7 +242,10 @@ Visual_query debe describir EXCLUSIVAMENTE lo que representa visualmente la fras
                             'superlativos sin comparación, o especulación presentada como hecho. '
                             'Devuelve JSON {"rejected":[índices enteros]}. Datos:\n' +
                             json.dumps(material, ensure_ascii=False))
-        rejected = check.get('rejected', [])
+        rejected = normalize_audit_payload(check, len(material))
+        if rejected is None:
+            log('Auditor devolvió JSON de formato imprevisto; reintentando el guion')
+            continue
         if rejected:
             log(f'Verificación rechazó escenas {rejected}; rehaciendo guion')
             continue
@@ -427,7 +435,7 @@ Tema general: {os.getenv('TOPIC', 'Titanoboa')}
 Rechaza toda especie parecida pero distinta, en especial {', '.join(EXCLUDED) if 'titanoboa' in os.getenv('TOPIC', '').lower() else 'representaciones engañosas'}.
 Si es documental fósil, no confundir reconstrucción con fósil auténtico. Si es paisaje de apoyo, acepta solo si la frase describe el ambiente (no el animal desaparecido). Respuesta JSON: {{"match":true/false}}. Ante incertidumbre, false.'''
     answer = gemini.generate(prompt, photo=preview, temperature=0)
-    return answer.get('match') is True
+    return isinstance(answer, dict) and answer.get('match') is True
 
 
 def choose_assets(script):
