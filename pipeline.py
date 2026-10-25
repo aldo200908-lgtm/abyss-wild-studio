@@ -33,6 +33,8 @@ from narration_budget import (predict_duration, remove_secondary_scene,
                               MAX_PREVIEW_SECONDS)
 from topic_guard import topic_problems
 from script_repair import apply_scene_repairs
+from audio_design import make_soundtracks
+from word_alignment import sync_words
 from viral_visuals import (shot_ranges, prepare_image, prepare_video,
                            make_mascots, mascot_events, MIN_SHOT, MAX_SHOT)
 from topic_research import (topic_plan, gather_candidates, candidate_selection,
@@ -458,9 +460,12 @@ def make_timing(script):
                 f'{index+1} ya verificada; nuevo intento sin acelerar')
     script['removed_voice_budget_scenes'] = removed
     save_json(WORK / 'voice_meta.json', info)
-    # Produce the diagnostic report before rejecting a faulty pronunciation.
+    # Use actual ASR word timestamps rather than naive duration interpolation.
     whisper = whisper_quality(WORK / 'voice.mp3', info['normalized_text'],
                               config, DIST / 'pronunciacion_reporte.txt')
+    marks, alignment = sync_words(
+        marks, whisper.get('word_timestamps', []), d)
+    whisper['alignment'] = alignment
     save_json(WORK / 'voice_asr.json', whisper)
     engine = 'Azure Speech ' + config['voice']
     expected = [normalized(w) for scene in scenes for w in tokens(scene['line'])]
@@ -485,7 +490,7 @@ def make_timing(script):
     script['captions'] = captions
     script['duration'] = round(d, 3)
     script['voice_engine'] = engine
-    script['word_timing_method'] = 'approximate_in_measured_phrase'
+    script['word_timing_method'] = alignment['method']
     save_json(WORK / 'script.json', script)
     log(f'Voz española ({engine}) {d:.1f}s, {len(marks)} subtítulos '
         'con tiempos aproximados; Whisper: '
@@ -730,32 +735,14 @@ def validate_broll(beats, duration):
     return len(beats)
 
 def audio_files():
+    """Unique mystery BGM, impact at 3s, soft ambience on selected B-roll cuts."""
     script = load_json(WORK / 'script.json')
-    secs = script['duration'] + .2
-    rate = 44100
-    n = int(rate * secs)
-    t = np.arange(n, dtype=np.float32) / rate
-    # Original procedural bed. No third-party music or samples.
-    melody = np.zeros(n, dtype=np.float32)
-    chord = [110., 138.59, 164.81, 196.0]
-    for i, hz in enumerate(chord):
-        melody += .025 * np.sin(2 * np.pi * hz * t + i * .7)
-    envelope = np.minimum(1, t / 1.5) * np.minimum(1, (secs - t) / 1.5)
-    melody = np.clip(melody * envelope, -1, 1)
-    write_wav(WORK / 'music.wav', melody, rate)
-    fx = np.zeros(n, dtype=np.float32)
-    for k, beat in enumerate(load_json(PUBLIC / 'data.json')['beats'][1:]):
-        start = int(beat['start'] * rate)
-        length = min(int(rate * .18), n - start)
-        if length <= 0:
-            continue
-        x = np.arange(length, dtype=np.float32) / rate
-        if k % 2:
-            sound = .09 * np.sin(2 * np.pi * (700*x + 1500*x*x)) * np.exp(-27*x)
-        else:
-            sound = .08 * np.random.default_rng(k + 44).normal(size=length) * np.exp(-28*x)
-        fx[start:start+length] += sound
-    write_wav(WORK / 'effects.wav', np.clip(fx, -1, 1), rate)
+    visual = load_json(PUBLIC / 'data.json')
+    cuts = [b['start'] for b in visual['beats']]
+    make_soundtracks(script['duration'], cuts, write_wav, WORK)
+    log('Audio: música de suspenso en bucle, golpe del gancho y ambiente contextual')
+
+
 
 
 def write_wav(path, signal, sample_rate):
@@ -777,7 +764,7 @@ def master_graph(ceiling=0.62, gain_db=0.0):
     if not -3 <= gain_db <= 4:
         raise ValueError('Ajuste de ganancia fuera de rango')
     return ('[1:a]aresample=44100,asplit=2[voicemix][voiceside];'
-            '[2:a]volume=-25dB[bed];'
+            '[2:a]volume=-20dB[bed];'
             '[bed][voiceside]sidechaincompress=threshold=0.02:ratio=8:attack=15:release=280[duck];'
             '[duck][voicemix][3:a]amix=inputs=3:duration=longest:normalize=0,'
             'loudnorm=I=-14:TP=-1.9:LRA=11,'
