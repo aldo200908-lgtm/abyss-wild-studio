@@ -23,7 +23,7 @@ class TopicFocusTests(unittest.TestCase):
         issues = topic_problems('Titanoboa', [{'line': s} for s in lines],
                                 title='Cerrejón')
         self.assertTrue(issues)
-        self.assertTrue(any('carbón' in issue for issue in issues))
+        self.assertTrue(any('gancho' in issue or 'conceptos centrales' in issue for issue in issues))
 
     def test_accepts_giant_snake_subject(self):
         lines = [
@@ -55,3 +55,33 @@ class TopicFocusTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+    def test_question_topic_can_use_synonym_instead_of_exact_phrase(self):
+        lines = [
+            'El mar puede brillar durante la noche',
+            'La bioluminiscencia produce esta luz',
+            'Muchos organismos generan destellos',
+            'La luminosidad cambia con el movimiento',
+            'El plancton puede emitir luz',
+            'La energía química produce destellos',
+            'Este fenómeno no es electricidad',
+            'La bioluminiscencia también aparece en océanos',
+            'Algunas especies pueden defenderse',
+            'Otros animales utilizan señales luminosas',
+            'La luz puede sorprender por su intensidad',
+            'Observarla es una experiencia espectacular',
+            '¿Por qué brilla el mar de noche?',
+        ]
+        issues = topic_problems('¿Por qué brilla el mar de noche?',
+                                [{'line': line} for line in lines],
+                                title='El misterioso mar brillante',
+                                anchors=['mar', 'bioluminiscencia', 'luz'])
+        self.assertEqual(issues, [])
+
+    def test_general_topic_rejects_an_unrelated_story(self):
+        scenes = [{'line': 'El nuevo edificio tiene muchas oficinas'} for _ in range(12)]
+        scenes += [{'line': '¿Qué te parece esta empresa?'}]
+        problems = topic_problems('Agujeros negros', scenes,
+                                   title='Un edificio impresionante',
+                                   anchors=['agujeros negros', 'gravedad'])
+        self.assertTrue(problems)
