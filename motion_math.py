@@ -15,7 +15,7 @@ import numpy as np
 from PIL import Image
 
 W, H = 1080, 1920
-CAPTION_Y = 0.52
+CAPTION_Y = 0.50
 CAPTION_SAFE_WIDTH = 0.90
 MAX_CAPTION_TEXT_PX = 900.0
 SIDE_MARGIN = 0.12
