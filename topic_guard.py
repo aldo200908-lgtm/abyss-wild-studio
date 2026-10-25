@@ -15,7 +15,7 @@ def canon(value):
 def stems(value):
     # Light morphology tolerance (serpiente/serpientes, estrellas/estrella).
     return {w[:6] if len(w) > 7 else w[:5] if len(w) > 5 else w
-            for w in keywords(value) if len(w) >= 4}
+            for w in keywords(value) if len(w) >= 3}
 
 
 def topic_problems(topic, scenes, title='', anchors=None):
