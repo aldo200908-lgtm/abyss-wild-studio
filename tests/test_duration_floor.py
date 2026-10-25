@@ -100,6 +100,29 @@ class VideoDurationPlanTests(unittest.TestCase):
 
 
 class NaturallyTimedAzureTest(unittest.TestCase):
+    def test_silence_trimmer_does_not_remove_actual_speech(self):
+        from native_spanish_voice import trim_tts_wav
+        sample_rate = 24000
+        seconds = 1.2
+        n = round(sample_rate * seconds)
+        t = np.arange(n, dtype=np.float32) / sample_rate
+        tone = (.20 * np.sin(2 * np.pi * 260 * t) * 32767).astype('<i2')
+        with tempfile.TemporaryDirectory() as directory:
+            input_file = Path(directory) / 'with_silence.wav'
+            output_file = Path(directory) / 'trimmed.wav'
+            with wave.open(str(input_file), 'wb') as f:
+                f.setnchannels(1)
+                f.setsampwidth(2)
+                f.setframerate(sample_rate)
+                f.writeframes((b'\\x00\\x00' * round(sample_rate*.25)) +
+                              tone.tobytes() +
+                              (b'\\x00\\x00' * round(sample_rate*.30)))
+            measured = trim_tts_wav(input_file, output_file)
+            # Removes actual leading/trailing silence, NOT 35ms speech each
+            # side as the previous nonzero start_duration filter did.
+            self.assertGreater(measured, seconds-.012)
+            self.assertLess(measured, seconds+.012)
+
     def test_near_floor_pcm_is_kept_at_original_tts_speed(self):
         class FakeAzure:
             def __init__(self):
