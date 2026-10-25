@@ -151,9 +151,12 @@ def wordmarks_per_scene(scenes, scene_time_ranges):
 
 def trim_tts_wav(source, dest):
     """FFmpeg trims only the leading and trailing silence."""
-    filt = ('silenceremove=start_periods=1:start_duration=0.035:'
+    # start_duration=0 keeps the very first voiced sample. A nonzero
+    # setting removes that much *speech* on each side, even from a pure tone.
+    # It previously shortened each Azure phrase by roughly 70 ms.
+    filt = ('silenceremove=start_periods=1:start_duration=0:'
             'start_threshold=-48dB,areverse,'
-            'silenceremove=start_periods=1:start_duration=0.035:'
+            'silenceremove=start_periods=1:start_duration=0:'
             'start_threshold=-48dB,areverse')
     subprocess.run(['ffmpeg', '-v', 'error', '-y', '-i', str(source),
                     '-af', filt, '-c:a', 'pcm_s16le', str(dest)], check=True)
