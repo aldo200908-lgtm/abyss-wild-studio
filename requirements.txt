@@ -1,4 +1,4 @@
 requests==2.32.3
-edge-tts==7.2.7
 Pillow==11.3.0
 numpy==2.3.3
+piper-tts==1.8.0
