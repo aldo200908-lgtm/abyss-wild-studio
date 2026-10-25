@@ -83,6 +83,18 @@ class MasteringAudioTests(unittest.TestCase):
                               run.call_args_list[1].args[0][
                                   run.call_args_list[1].args[0].index('-filter_complex') + 1])
 
+    def test_low_lufs_gets_automatic_second_mix(self):
+        with tempfile.TemporaryDirectory() as temp:
+            with patch.object(pipeline, 'WORK', Path(temp)), \
+                    patch.object(pipeline, 'DIST', Path(temp)), \
+                    patch.object(pipeline, 'audio_files'), \
+                    patch.object(pipeline.subprocess, 'run') as run, \
+                    patch.object(pipeline, 'measured_true_peak', side_effect=[-4.06, -3.0]), \
+                    patch.object(pipeline, 'measured_lufs', side_effect=[-16.8, -14.9]):
+                pipeline.master()
+                self.assertEqual(run.call_count, 2)
+                self.assertIn('volume=+2.00dB', str(run.call_args_list[1]))
+
     def test_invalid_post_aac_loudness_still_rejected(self):
         with tempfile.TemporaryDirectory() as temp:
             with patch.object(pipeline, 'WORK', Path(temp)), \
@@ -93,7 +105,7 @@ class MasteringAudioTests(unittest.TestCase):
                                  return_value=-3.0), \
                     patch.object(pipeline, 'measured_lufs',
                                  return_value=-17.0):
-                with self.assertRaisesRegex(RuntimeError, 'LUFS'):
+                with self.assertRaisesRegex(RuntimeError, 'volumen y true peak'):
                     pipeline.master()
 
 
