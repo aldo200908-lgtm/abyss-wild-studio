@@ -32,7 +32,10 @@ def topic_problems(topic, scenes, title='', anchors=None):
         anchors = []
     subject = keywords(topic)
     # A single named subject must appear by name in title, hook and question.
-    proper_subject = len(subject) == 1 and len(subject[0]) >= 5
+    proper_subject = (len(subject) == 1 and len(subject[0]) >= 5 and
+                      '?' not in topic and '¿' not in topic and
+                      not fold(topic).strip().startswith(('por que', 'como ', 'que ',
+                                                         'cuando ', 'donde ')))
     if proper_subject:
         word = canon(subject[0])
         if word not in canon(' '.join(lines[:3])):
