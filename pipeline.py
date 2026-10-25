@@ -588,7 +588,7 @@ def image_preview(data):
 def approve_visual(gemini, scene, candidate, preview):
     """Audit factual suitability; allow honest illustrative subject B-roll."""
     prompt = f'''Evalúa esta imagen/miniatura para B-roll de un Short documental.
-Tema: {os.getenv('TOPIC', 'Titanoboa')}
+Tema: {scene.get('topic') or os.getenv('TOPIC', 'Titanoboa')}
 Narración de esta escena: {scene['line']}
 Consulta visual: {scene.get('visual_query', '')}
 Medio identificado: {candidate.get('title', '')}
@@ -726,6 +726,7 @@ def choose_assets(script):
                       if sc['start'] <= midpoint < sc['end']),
                      len(script['timeline'])-1)
         scene = dict(script['timeline'][index])
+        scene['topic'] = script['topic']
         asset = scene_media.get(index)
         reused_this_shot = False
         if asset is None:
@@ -1004,7 +1005,7 @@ def validate():
     (DIST / 'fuentes.txt').write_text('\n'.join(source_lines), encoding='utf-8')
     credit_lines = ['MEDIOS AUDIOVISUALES Y CRÉDITOS', '']
     for credit in script['credits']:
-        credit_lines.extend([f"Escena {credit['scene']}: {credit['title']}",
+        credit_lines.extend([f"Escenas {', '.join(map(str, credit.get('scenes_used', [credit['scene']))))}: {credit['title']}",
                              f"Autor: {credit['author']}", f"Licencia: {credit['license']}",
                              f"Licencia URL: {credit['license_url']}", f"Origen: {credit['page']}", ''])
     credit_lines += ['Música y efectos: generados algorítmicamente en este proyecto (sin muestras de terceros).',
@@ -1028,7 +1029,8 @@ def validate():
     if script['credits']:
         description += '\nATRIBUCIÓN DE IMÁGENES Y CLIPS:\n'
         for c in script['credits']:
-            text_line = f"Escena {c['scene']}: {c['author']} — {c['license']} — {c['page']} — {c['license_url']}\n"
+            scenes = ', '.join(map(str, c.get('scenes_used', [c['scene']])))
+            text_line = f"Escenas {scenes}: {c['author']} — {c['license']} — {c['page']} — {c['license_url']}\n"
             if len(description) + len(text_line) < 4900:
                 description += text_line
     (DIST / 'descripcion.txt').write_text(description, encoding='utf-8')
