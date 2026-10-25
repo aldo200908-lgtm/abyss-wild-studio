@@ -268,7 +268,15 @@ def whisper_quality(audio, expected, config, report_path):
                          compute_type='int8', cpu_threads=2)
     segments, info = model.transcribe(str(audio), language='es', beam_size=5,
                                      condition_on_previous_text=False, word_timestamps=True)
+    segments = list(segments)
     heard = ' '.join(seg.text.strip() for seg in segments).strip()
+    word_times = []
+    for seg in segments:
+        for word in (seg.words or []):
+            if word.start is not None and word.end is not None:
+                word_times.append({'text': word.word.strip(),
+                                   'start': round(word.start, 3),
+                                   'end': round(word.end, 3)})
     score, suspects = transcript_score(expected, heard)
     lines = [f'Voz: {config["voice"]}', 'Idioma de transcripción: es',
              f'Coincidencia léxica: {score:.2%}',
@@ -289,7 +297,7 @@ def whisper_quality(audio, expected, config, report_path):
                            f'{config["min_transcription_match"]:.0%}; '
                            f'consulta {report_path}')
     return {'transcription': heard, 'transcription_match': round(score, 4),
-            'suspect_words': suspects}
+            'suspect_words': suspects, 'word_timestamps': word_times}
 
 
 def spectral_high_frequency_ratio(audio):
