@@ -24,6 +24,8 @@ jobs:
     env:
       TOPIC: ${{ inputs.topic }}
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      AZURE_SPEECH_KEY: ${{ secrets.AZURE_SPEECH_KEY }}
+      AZURE_SPEECH_REGION: ${{ secrets.AZURE_SPEECH_REGION }}
       PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
       GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.5-flash-lite' }}
       MONTHLY_LIMIT_PEN: ${{ vars.MONTHLY_LIMIT_PEN || '20' }}
@@ -67,6 +69,11 @@ jobs:
           node --input-type=module -e "import {ensureBrowser} from '@remotion/renderer'; await ensureBrowser();"
       - name: 4b · Probar formatos JSON de Gemini
         run: python -m unittest discover -s tests -p 'test_*.py' -v
+      - name: 4c · Validar voz española y secretos
+        run: |
+          python -c "from native_spanish_voice import config_from; config_from('config.json')"
+          test -n "$AZURE_SPEECH_KEY" || { echo 'Falta AZURE_SPEECH_KEY: no hay voz autorizada y no existe fallback.'; exit 1; }
+          test -n "$AZURE_SPEECH_REGION" || { echo 'Falta AZURE_SPEECH_REGION de Azure Speech.'; exit 1; }
       - name: 5 · Presupuesto mensual
         run: |
           echo "PIPELINE_START_EPOCH=$(date +%s)" >> "$GITHUB_ENV"
@@ -83,11 +90,23 @@ jobs:
         run: python pipeline.py validate
       - name: 11 · Actualizar contador de costes
         run: python budget.py finalize
+      - name: 11b · Conservar informe de pronunciación, incluso si falla
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: informe-pronunciacion-${{ github.run_id }}
+          path: |
+            dist/pronunciacion_reporte.txt
+            dist/audio_calidad.json
+            work/voice_meta.json
+            work/voice_asr.json
+          if-no-files-found: ignore
       - name: 12 · Crear enlaces de descarga (Release)
         run: |
           gh release create "short-${GITHUB_RUN_ID}" \
             dist/video.mp4 dist/guion.txt dist/fuentes.txt \
             dist/creditos.txt dist/descripcion.txt dist/reporte.json \
+            dist/pronunciacion_reporte.txt dist/audio_calidad.json \
             --title "ABYSS WILD Short #${GITHUB_RUN_ID}" \
             --notes-file work/release-notes.txt \
             --latest=false
