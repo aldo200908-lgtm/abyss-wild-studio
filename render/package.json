@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "render": "node render.mjs"
+    "render": "node render.mjs",
+    "test:motion": "node --test tests/motion.test.mjs"
   },
   "dependencies": {
     "@fontsource/anton": "5.2.7",
