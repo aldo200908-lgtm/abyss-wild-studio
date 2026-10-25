@@ -26,8 +26,11 @@ from motion_math import (apply_motion_plans, validate_motion, validate_captions,
                          CAPTION_Y, CAPTION_SAFE_WIDTH, MAX_CAPTION_TEXT_PX)
 from response_shapes import normalize_script_payload, normalize_audit_payload
 from native_spanish_voice import (AzureSpanishSpeech, config_from, render_native_voice,
-                                  whisper_quality, spectral_high_frequency_ratio)
+                                  whisper_quality, spectral_high_frequency_ratio,
+                                  NarrationDurationError)
 from spanish_voice_text import load_dictionary
+from narration_budget import (predict_duration, remove_secondary_scene,
+                              MAX_PREVIEW_SECONDS)
 from topic_guard import topic_problems
 from script_repair import apply_scene_repairs
 from topic_research import (topic_plan, gather_candidates, candidate_selection,
@@ -238,11 +241,13 @@ Genera SOLO un OBJETO JSON: {{"title":"...","scenes":[{{"line":"...",
 "visual_type":"photo|object|fossil|landscape|reconstruction|diagram|infographic",
 "label":"DATO VERIFICADO|FÓSIL REAL|ILUSTRACIÓN|ARCHIVO DE APOYO",
 "compare_m":null}}]}}.
-Obligatorio: 10 a 12 escenas; 90 a 110 palabras en conjunto;
-cada escena 8 a 12 palabras, con puntuación y gramática correcta, sin
-siglas inexplicadas y sin palabras extranjeras innecesarias. Estas escenas se
-sintetizan en español una por una a ritmo natural. Una idea narrativa, 30 a 45 segundos de voz,
-gancho de máximo dos segundos, cambio visual cada 2 a 3 segundos.
+Obligatorio: EXACTAMENTE 10 escenas y entre 70 y 80 palabras TOTALES.
+Cada escena tendrá entre 6 y 10 palabras, con puntuación y gramática
+correctas y sin siglas inexplicadas. El último cierre también cuenta
+dentro de ese máximo. El narrador usa voz española natural lenta:
+103 palabras produjeron 52,4 segundos; NO generes guiones largos.
+La voz necesita durar entre 30 y 45 segundos SIN acelerar.
+Mantén un único relato, un gancho breve y cambios visuales cada 2–3 segundos.
 Primera escena: afirmación documentada impactante, sin saludo.
 Última: pregunta breve sobre el tema sin nuevos hechos y fact_ids=[].
 Las demás escenas: fact_ids de la evidencia literal (1-2 IDs).
@@ -259,7 +264,7 @@ en palabras en line para que se sincronicen los subtítulos.'''
             log(f'Gemini devolvió un guion con estructura no válida (intento {attempt+1}/3); reintentando')
             continue
         scenes = result['scenes']
-        if not isinstance(scenes, list) or len(scenes) < 10 or len(scenes) > 20:
+        if not isinstance(scenes, list) or len(scenes) != 10:
             continue
         ids = {f['id'] for f in selected}
         if any(not isinstance(s, dict) or not s.get('line') or
@@ -274,8 +279,18 @@ en palabras en line para que se sincronicen los subtítulos.'''
             log('Guion DESCARTADO por desviarse del tema: ' + '; '.join(focus))
             continue
         nwords = sum(len(tokens(s['line'])) for s in scenes)
-        if not 78 <= nwords <= 112:
-            log(f'Guion descartado por longitud: {nwords} palabras')
+        if not 66 <= nwords <= 86:
+            log(f'Guion descartado por longitud: {nwords} palabras (objetivo 70-80)')
+            continue
+        cfg = config_from(ROOT / 'config.json')
+        try:
+            predicted = predict_duration(scenes, cfg)
+        except ValueError as e:
+            log(f'Guion descartado por agrupación de frases: {e}')
+            continue
+        if not 30 <= predicted <= MAX_PREVIEW_SECONDS:
+            log(f'Guion descartado por duración estimada de Jorge: '
+                f'{predicted:.1f}s (máximo preliminar {MAX_PREVIEW_SECONDS:.1f}s)')
             continue
         verified = False
         for audit_round in range(3):
@@ -361,6 +376,16 @@ en palabras en line para que se sincronicen los subtítulos.'''
             result['scenes'] = scenes
         if not verified:
             continue
+        # Factual repair may change the number of spoken words.
+        nwords = sum(len(tokens(scene['line'])) for scene in scenes)
+        try:
+            predicted = predict_duration(scenes, cfg)
+        except ValueError:
+            continue
+        if not 66 <= nwords <= 86 or not 30 <= predicted <= MAX_PREVIEW_SECONDS:
+            log(f'Guion reparado no cumple el presupuesto de voz: '
+                f'{nwords} palabras; {predicted:.1f}s estimados')
+            continue
         for s in scenes:
             value = s.get('compare_m')
             evidence = ' '.join(f['text'] for f in selected if f['id'] in s.get('fact_ids', []))
@@ -371,8 +396,10 @@ en palabras en line para que se sincronicen los subtítulos.'''
         result['facts'] = selected
         result['topic_plan'] = plan
         result['visual_exclusions'] = excluded
+        result['estimated_narration_seconds'] = predicted
         save_json(WORK / 'script.json', result)
-        log(f'Guion verificado: {len(scenes)} escenas, {nwords} palabras')
+        log(f'Guion verificado: {len(scenes)} escenas, {nwords} palabras, '
+            f'voz estimada {predicted:.1f}s con Jorge')
         return result
     raise RuntimeError('Sin guion completamente verificable tras 3 intentos. Publicación cancelada.')
 
@@ -388,10 +415,9 @@ def duration(path):
 
 
 def make_timing(script):
-    """Synthesize Spanish narration locally with exact scene timings.
+    """Narrate in native Spanish; shorten verified scenes if measured >45s.
 
-    Word-level caption timestamps are estimates interpolated within each
-    measured scene; Piper does not provide Edge WordBoundary events.
+    Timings are estimates within each measured phrase, not forced alignment.
     """
     scenes = script['scenes']
     config = config_from(ROOT / 'config.json')
@@ -399,8 +425,36 @@ def make_timing(script):
     speaker = AzureSpanishSpeech(os.getenv('AZURE_SPEECH_KEY', ''),
                                 os.getenv('AZURE_SPEECH_REGION', ''))
     speaker.ensure_voice(config['voice'])
-    marks, d, info = render_native_voice(
-        scenes, WORK / 'voice.mp3', config, dictionary, speaker)
+    removed = []
+    for attempt in range(3):
+        try:
+            marks, d, info = render_native_voice(
+                scenes, WORK / 'voice.mp3', config, dictionary, speaker)
+            break
+        except NarrationDurationError as err:
+            # Never speed up or rephrase unaudited facts: remove one approved
+            # secondary scene and narrate the shorter script again.
+            if err.seconds < 30 or attempt == 2:
+                raise
+            reduced = remove_secondary_scene(scenes, config)
+            if reduced is None:
+                raise RuntimeError(
+                    f'Locución {err.seconds:.1f}s; no se pueden quitar más '
+                    'escenas sin afectar el mínimo de 8') from err
+            shortened, index, scene_removed = reduced
+            focus = topic_problems(script['topic'], shortened,
+                                   script.get('title', ''),
+                                   script.get('topic_plan', {}).get('anchors'))
+            if focus:
+                raise RuntimeError(
+                    'El recorte de escenas rompería el enfoque editorial: '
+                    + '; '.join(focus)) from err
+            removed.append({'original_index': index, 'line': scene_removed['line']})
+            scenes = shortened
+            script['scenes'] = scenes
+            log(f'Voz natural {err.seconds:.1f}s: omitida escena secundaria '
+                f'{index+1} ya verificada; nuevo intento sin acelerar')
+    script['removed_voice_budget_scenes'] = removed
     save_json(WORK / 'voice_meta.json', info)
     # Produce the diagnostic report before rejecting a faulty pronunciation.
     whisper = whisper_quality(WORK / 'voice.mp3', info['normalized_text'],
